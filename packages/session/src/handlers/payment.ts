@@ -116,7 +116,7 @@ export async function onPaymentConfirmed(
 
     // Enqueue one ImageProcessing job per image
     const imageQueue = getImageQueue();
-    const imageJobs = order.inputImageUrls.map((url, i) => ({
+    const imageJobs = order.inputImageUrls.map((url: string, i: number) => ({
       name: 'process_image',
       data: {
         orderId: order.id,

@@ -41,7 +41,7 @@ export async function razorpayWebhookRoutes(app: FastifyInstance): Promise<void>
           eventType: body.event,
           rawPayload: body,
         },
-      }).catch((err) => app.log.error({ err }, 'Failed to store webhook event'));
+      }).catch((err: unknown) => app.log.error({ err }, 'Failed to store webhook event'));
 
       // Only handle payment_link.paid
       if (body.event !== 'payment_link.paid') {

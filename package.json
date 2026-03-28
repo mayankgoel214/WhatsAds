@@ -5,7 +5,7 @@
     "dev:api": "pnpm --filter @whatsads/api dev",
     "dev:worker": "pnpm --filter @whatsads/worker dev",
     "dev": "pnpm run --parallel dev:api dev:worker",
-    "build": "pnpm -r build",
+    "build": "pnpm --filter @whatsads/db build && pnpm --filter '!@whatsads/db' -r build",
     "typecheck": "pnpm -r typecheck",
     "db:generate": "pnpm --filter @whatsads/db generate",
     "db:migrate": "pnpm --filter @whatsads/db migrate",

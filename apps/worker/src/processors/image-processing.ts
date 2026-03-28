@@ -7,6 +7,7 @@
 
 import type { Job } from 'bullmq';
 import { prisma } from '@whatsads/db';
+import type { ImageJob } from '@whatsads/db';
 import { processProductImage } from '@whatsads/ai';
 import { uploadFile, Buckets } from '@whatsads/storage';
 import { WhatsAppClient } from '@whatsads/whatsapp';
@@ -101,13 +102,13 @@ export async function processImageJob(job: Job): Promise<void> {
       });
 
       const allComplete = allJobs.every(
-        (j) => j.status === 'completed' || j.status === 'failed',
+        (j: ImageJob) => j.status === 'completed' || j.status === 'failed',
       );
 
       if (allComplete) {
         const completedUrls = allJobs
-          .filter((j) => j.status === 'completed' && j.outputImageUrl)
-          .map((j) => j.outputImageUrl!);
+          .filter((j: ImageJob) => j.status === 'completed' && j.outputImageUrl)
+          .map((j: ImageJob) => j.outputImageUrl!);
 
         // Update order status
         await prisma.order.update({

@@ -67,7 +67,7 @@ export async function whatsappWebhookRoutes(app: FastifyInstance): Promise<void>
           eventType: 'message',
           rawPayload: body as any,
         },
-      }).catch((err) => app.log.error({ err }, 'Failed to store webhook event'));
+      }).catch((err: unknown) => app.log.error({ err }, 'Failed to store webhook event'));
 
       // Extract message
       const extracted = extractMessage(body);

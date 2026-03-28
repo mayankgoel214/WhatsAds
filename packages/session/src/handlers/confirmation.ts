@@ -8,7 +8,7 @@
 
 import type { WhatsAppClient } from '@whatsads/whatsapp';
 import { prisma } from '@whatsads/db';
-import type { Session, User } from '@whatsads/db';
+import type { Session, User, Prisma } from '@whatsads/db';
 import { transitionTo } from '../db-helpers.js';
 import {
   msgOrderSummary,
@@ -114,7 +114,7 @@ async function createOrderAndAdvance(
 
   try {
     // Create the Order in a transaction
-    const order = await prisma.$transaction(async (tx) => {
+    const order = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const newOrder = await tx.order.create({
         data: {
           phoneNumber,
