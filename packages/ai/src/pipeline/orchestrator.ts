@@ -1,11 +1,12 @@
 import { assessInputImage } from '../qa/assess.js';
-import { checkOutputQuality } from '../qa/output-check.js';
+import { checkOutputQuality, checkOutputWithReference } from '../qa/output-check.js';
 import { preprocessImage } from './preprocess.js';
-import { runProductShot } from './product-shot.js';
+import { runKontextShot } from './kontext-shot.js';
 import { runFallbackPipeline } from './fallback.js';
-import { buildScenePrompt } from '../prompts/product-shot.js';
+import { runProductShot } from './product-shot.js';
+import { buildKontextPrompt, buildScenePrompt } from '../prompts/product-shot.js';
 import type { InputAssessment } from '../qa/assess.js';
-import type { OutputAssessment } from '../qa/output-check.js';
+import type { ComparativeAssessment } from '../qa/output-check.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -28,7 +29,7 @@ export interface ProcessImageResult {
   outputUrl: string;
   cutoutUrl?: string;
   qaScore: number;
-  pipeline: 'primary' | 'fallback';
+  pipeline: 'kontext' | 'segmentation' | 'bria';
   attempts: number;
   durationMs: number;
   inputAssessment?: InputAssessment;
@@ -41,16 +42,21 @@ interface AttemptRecord {
   outputUrl: string;
   cutoutUrl?: string;
   qaScore: number;
-  pipeline: 'primary' | 'fallback';
-  outputAssessment: OutputAssessment;
+  pipeline: 'kontext' | 'segmentation' | 'bria';
+  assessment: ComparativeAssessment;
 }
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const QA_PASS_THRESHOLD = 65;
-const QA_RETRY_THRESHOLD = 55;
+/** Comparative QA pass: score >= 70 AND fidelity >= 25 */
+const QA_PASS_SCORE = 70;
+const QA_FIDELITY_MIN = 25;
+
+/** Lower threshold for "acceptable" results when all pipelines tried */
+const QA_ACCEPTABLE_SCORE = 55;
+
 const DEFAULT_MAX_ATTEMPTS = 3;
 
 // ---------------------------------------------------------------------------
@@ -67,17 +73,11 @@ async function downloadBuffer(url: string): Promise<Buffer> {
   return Buffer.from(await resp.arrayBuffer());
 }
 
-/** Slightly adjust the scene prompt on retry to nudge the model */
-function buildRetryPrompt(
-  basePrompt: string,
-  attempt: number
-): string {
-  const adjustments = [
-    ', high detail, photorealistic, sharp focus',
-    ', professional product photography, crystal clear, vibrant',
-  ];
-  const adj = adjustments[attempt - 2]; // attempt 2 → index 0
-  return adj ? `${basePrompt}${adj}` : basePrompt;
+function isPassingQA(assessment: ComparativeAssessment): boolean {
+  return (
+    assessment.score >= QA_PASS_SCORE &&
+    assessment.productFidelityScore >= QA_FIDELITY_MIN
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -89,13 +89,15 @@ function buildRetryPrompt(
  *
  * This is the main entry point called by the background worker.
  *
- * Flow:
+ * New pipeline order (optimized for product fidelity):
  * 1. Download + preprocess (sharp)
  * 2. Assess input quality (Gemini) — reject if unusable
- * 3. Attempt 1: Bria Product Shot (primary) — pass if QA score >= 65
- * 4. Attempt 2: Bria Product Shot with adjusted prompt — pass if score >= 55
- * 5. Attempt 3: Fallback pipeline (RMBG + Flux Schnell + compositing)
- * 6. Return best result regardless of score
+ * 3. Attempt 1: Flux Kontext Pro — preserves product via image editing
+ * 4. Attempt 2: Segmentation pipeline — BiRefNet + Flux Pro + IC-Light
+ * 5. Attempt 3: Bria Product Shot — last resort
+ * 6. Return best result by comparative QA score
+ *
+ * All attempts use COMPARATIVE QA (input vs output) to catch product distortion.
  */
 export async function processProductImage(
   params: ProcessImageParams
@@ -153,7 +155,7 @@ export async function processProductImage(
     return {
       outputUrl: '',
       qaScore: 0,
-      pipeline: 'primary',
+      pipeline: 'kontext',
       attempts: 0,
       durationMs: Date.now() - totalStart,
       inputAssessment,
@@ -166,134 +168,78 @@ export async function processProductImage(
   const resolvedCategory =
     params.productCategory ?? inputAssessment.productCategory ?? 'other';
 
-  // -------------------------------------------------------------------------
-  // Stage 3: Build base scene prompt
-  // -------------------------------------------------------------------------
-
-  const baseScenePrompt = buildScenePrompt(
-    params.style,
-    resolvedCategory,
-    params.voiceInstructions
-  );
+  // Keep the preprocessed input buffer for comparative QA
+  const inputBufferForQA = processedBuffer;
 
   // -------------------------------------------------------------------------
-  // Stage 4: Attempt 1 — Primary pipeline (Bria Product Shot)
+  // Stage 3: Attempt 1 — Flux Kontext Pro (primary)
   // -------------------------------------------------------------------------
 
   if (maxAttempts >= 1) {
-    const attempt1Start = Date.now();
+    const attemptStart = Date.now();
     try {
-      const { outputUrl } = await runProductShot({
+      const kontextPrompt = buildKontextPrompt(
+        params.style,
+        resolvedCategory,
+        params.voiceInstructions
+      );
+
+      const { outputUrl } = await runKontextShot({
         imageUrl: params.imageUrl,
-        scenePrompt: baseScenePrompt,
+        prompt: kontextPrompt,
       });
 
       const outputBuffer = await downloadBuffer(outputUrl);
-      const qaOut = await checkOutputQuality(outputBuffer);
+      const qa = await checkOutputWithReference(inputBufferForQA, outputBuffer);
 
-      stageTiming['attempt_1'] = Date.now() - attempt1Start;
+      stageTiming['attempt_1_kontext'] = Date.now() - attemptStart;
 
       console.info(
         JSON.stringify({
-          event: 'orchestrator_attempt_1',
-          qaScore: qaOut.score,
-          pass: qaOut.pass,
-          durationMs: stageTiming['attempt_1'],
+          event: 'orchestrator_attempt_1_kontext',
+          qaScore: qa.score,
+          fidelity: qa.productFidelity,
+          fidelityScore: qa.productFidelityScore,
+          pass: isPassingQA(qa),
+          durationMs: stageTiming['attempt_1_kontext'],
         })
       );
 
       attempts.push({
         outputUrl,
-        qaScore: qaOut.score,
-        pipeline: 'primary',
-        outputAssessment: qaOut,
+        qaScore: qa.score,
+        pipeline: 'kontext',
+        assessment: qa,
       });
 
-      if (qaOut.score >= QA_PASS_THRESHOLD) {
+      if (isPassingQA(qa)) {
         return {
           outputUrl,
-          qaScore: qaOut.score,
-          pipeline: 'primary',
+          qaScore: qa.score,
+          pipeline: 'kontext',
           attempts: 1,
           durationMs: Date.now() - totalStart,
           inputAssessment,
         };
       }
     } catch (err) {
-      stageTiming['attempt_1'] = Date.now() - attempt1Start;
+      stageTiming['attempt_1_kontext'] = Date.now() - attemptStart;
       console.error(
         JSON.stringify({
-          event: 'orchestrator_attempt_1_error',
+          event: 'orchestrator_attempt_1_kontext_error',
           error: err instanceof Error ? err.message : String(err),
-          durationMs: stageTiming['attempt_1'],
+          durationMs: stageTiming['attempt_1_kontext'],
         })
       );
     }
   }
 
   // -------------------------------------------------------------------------
-  // Stage 5: Attempt 2 — Bria Product Shot with adjusted prompt
+  // Stage 4: Attempt 2 — Segmentation pipeline (BiRefNet + Flux Pro)
   // -------------------------------------------------------------------------
 
   if (maxAttempts >= 2) {
-    const attempt2Start = Date.now();
-    const retryPrompt = buildRetryPrompt(baseScenePrompt, 2);
-
-    try {
-      const { outputUrl } = await runProductShot({
-        imageUrl: params.imageUrl,
-        scenePrompt: retryPrompt,
-      });
-
-      const outputBuffer = await downloadBuffer(outputUrl);
-      const qaOut = await checkOutputQuality(outputBuffer);
-
-      stageTiming['attempt_2'] = Date.now() - attempt2Start;
-
-      console.info(
-        JSON.stringify({
-          event: 'orchestrator_attempt_2',
-          qaScore: qaOut.score,
-          pass: qaOut.pass,
-          durationMs: stageTiming['attempt_2'],
-        })
-      );
-
-      attempts.push({
-        outputUrl,
-        qaScore: qaOut.score,
-        pipeline: 'primary',
-        outputAssessment: qaOut,
-      });
-
-      if (qaOut.score >= QA_RETRY_THRESHOLD) {
-        return {
-          outputUrl,
-          qaScore: qaOut.score,
-          pipeline: 'primary',
-          attempts: 2,
-          durationMs: Date.now() - totalStart,
-          inputAssessment,
-        };
-      }
-    } catch (err) {
-      stageTiming['attempt_2'] = Date.now() - attempt2Start;
-      console.error(
-        JSON.stringify({
-          event: 'orchestrator_attempt_2_error',
-          error: err instanceof Error ? err.message : String(err),
-          durationMs: stageTiming['attempt_2'],
-        })
-      );
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // Stage 6: Attempt 3 — Fallback pipeline (RMBG + Flux + compositing)
-  // -------------------------------------------------------------------------
-
-  if (maxAttempts >= 3) {
-    const attempt3Start = Date.now();
+    const attemptStart = Date.now();
     try {
       const { outputUrl, cutoutUrl } = await runFallbackPipeline({
         imageUrl: params.imageUrl,
@@ -302,44 +248,109 @@ export async function processProductImage(
       });
 
       const outputBuffer = await downloadBuffer(outputUrl);
-      const qaOut = await checkOutputQuality(outputBuffer);
+      const qa = await checkOutputWithReference(inputBufferForQA, outputBuffer);
 
-      stageTiming['attempt_3_fallback'] = Date.now() - attempt3Start;
+      stageTiming['attempt_2_segmentation'] = Date.now() - attemptStart;
 
       console.info(
         JSON.stringify({
-          event: 'orchestrator_attempt_3_fallback',
-          qaScore: qaOut.score,
-          pass: qaOut.pass,
-          durationMs: stageTiming['attempt_3_fallback'],
+          event: 'orchestrator_attempt_2_segmentation',
+          qaScore: qa.score,
+          fidelity: qa.productFidelity,
+          fidelityScore: qa.productFidelityScore,
+          pass: isPassingQA(qa),
+          durationMs: stageTiming['attempt_2_segmentation'],
         })
       );
 
       attempts.push({
         outputUrl,
         cutoutUrl,
-        qaScore: qaOut.score,
-        pipeline: 'fallback',
-        outputAssessment: qaOut,
+        qaScore: qa.score,
+        pipeline: 'segmentation',
+        assessment: qa,
       });
 
-      // Return fallback result regardless of score — it's our last option
+      if (isPassingQA(qa)) {
+        return {
+          outputUrl,
+          cutoutUrl,
+          qaScore: qa.score,
+          pipeline: 'segmentation',
+          attempts: 2,
+          durationMs: Date.now() - totalStart,
+          inputAssessment,
+        };
+      }
+    } catch (err) {
+      stageTiming['attempt_2_segmentation'] = Date.now() - attemptStart;
+      console.error(
+        JSON.stringify({
+          event: 'orchestrator_attempt_2_segmentation_error',
+          error: err instanceof Error ? err.message : String(err),
+          durationMs: stageTiming['attempt_2_segmentation'],
+        })
+      );
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Stage 5: Attempt 3 — Bria Product Shot (last resort)
+  // -------------------------------------------------------------------------
+
+  if (maxAttempts >= 3) {
+    const attemptStart = Date.now();
+    try {
+      const scenePrompt = buildScenePrompt(
+        params.style,
+        resolvedCategory,
+        params.voiceInstructions
+      );
+
+      const { outputUrl } = await runProductShot({
+        imageUrl: params.imageUrl,
+        scenePrompt,
+      });
+
+      const outputBuffer = await downloadBuffer(outputUrl);
+      const qa = await checkOutputWithReference(inputBufferForQA, outputBuffer);
+
+      stageTiming['attempt_3_bria'] = Date.now() - attemptStart;
+
+      console.info(
+        JSON.stringify({
+          event: 'orchestrator_attempt_3_bria',
+          qaScore: qa.score,
+          fidelity: qa.productFidelity,
+          fidelityScore: qa.productFidelityScore,
+          pass: isPassingQA(qa),
+          durationMs: stageTiming['attempt_3_bria'],
+        })
+      );
+
+      attempts.push({
+        outputUrl,
+        qaScore: qa.score,
+        pipeline: 'bria',
+        assessment: qa,
+      });
+
+      // Return Bria regardless — it's our last option
       return {
         outputUrl,
-        cutoutUrl,
-        qaScore: qaOut.score,
-        pipeline: 'fallback',
+        qaScore: qa.score,
+        pipeline: 'bria',
         attempts: 3,
         durationMs: Date.now() - totalStart,
         inputAssessment,
       };
     } catch (err) {
-      stageTiming['attempt_3_fallback'] = Date.now() - attempt3Start;
+      stageTiming['attempt_3_bria'] = Date.now() - attemptStart;
       console.error(
         JSON.stringify({
-          event: 'orchestrator_attempt_3_error',
+          event: 'orchestrator_attempt_3_bria_error',
           error: err instanceof Error ? err.message : String(err),
-          durationMs: stageTiming['attempt_3_fallback'],
+          durationMs: stageTiming['attempt_3_bria'],
         })
       );
     }
@@ -353,14 +364,24 @@ export async function processProductImage(
     throw new Error('All pipeline attempts failed with no successful output');
   }
 
-  const best = attempts.reduce((prev, curr) =>
-    curr.qaScore > prev.qaScore ? curr : prev
-  );
+  // Pick the best by composite score, with fidelity as tiebreaker
+  const best = attempts.reduce((prev, curr) => {
+    if (curr.qaScore > prev.qaScore) return curr;
+    if (
+      curr.qaScore === prev.qaScore &&
+      curr.assessment.productFidelityScore > prev.assessment.productFidelityScore
+    ) {
+      return curr;
+    }
+    return prev;
+  });
 
   console.warn(
     JSON.stringify({
-      event: 'orchestrator_all_attempts_below_threshold',
+      event: 'orchestrator_returning_best_attempt',
       bestScore: best.qaScore,
+      bestPipeline: best.pipeline,
+      bestFidelity: best.assessment.productFidelity,
       totalAttempts: attempts.length,
       durationMs: Date.now() - totalStart,
     })

@@ -49,6 +49,9 @@ enum PaymentStatus {
 enum JobPipeline {
   primary
   fallback
+  kontext
+  segmentation
+  bria
 }
 
 enum JobStatus {

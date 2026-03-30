@@ -6,12 +6,25 @@
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import { WhatsAppClient, extractMessage, getMessageType, verifyWebhookSignature } from '@whatsads/whatsapp';
 import type { WhatsAppWebhookBody } from '@whatsads/whatsapp';
 import { handleIncomingMessage } from '@whatsads/session';
 import type { MessageContext } from '@whatsads/session';
 import { prisma } from '@whatsads/db';
 import { getConfig } from '../../config.js';
+
+/** Read the latest WHATSAPP_ACCESS_TOKEN from .env at runtime (avoids server restart on token change) */
+function getFreshAccessToken(): string {
+  try {
+    const envPath = resolve(process.cwd(), '.env');
+    const content = readFileSync(envPath, 'utf-8');
+    const match = content.match(/^WHATSAPP_ACCESS_TOKEN=(.+)$/m);
+    if (match?.[1]) return match[1].trim();
+  } catch {}
+  return getConfig().WHATSAPP_ACCESS_TOKEN;
+}
 
 export async function whatsappWebhookRoutes(app: FastifyInstance): Promise<void> {
   const config = getConfig();
@@ -53,7 +66,8 @@ export async function whatsappWebhookRoutes(app: FastifyInstance): Promise<void>
         return;
       }
 
-      if (!verifyWebhookSignature(rawBody, signature, config.WHATSAPP_APP_SECRET)) {
+      if (config.WHATSAPP_APP_SECRET !== 'placeholder' &&
+          !verifyWebhookSignature(rawBody, signature, config.WHATSAPP_APP_SECRET)) {
         app.log.warn('Invalid WhatsApp webhook signature');
         return;
       }
@@ -111,9 +125,9 @@ export async function whatsappWebhookRoutes(app: FastifyInstance): Promise<void>
             : undefined,
       };
 
-      // Create WhatsApp client for this request
+      // Create WhatsApp client with fresh token (re-reads .env each time)
       const wa = new WhatsAppClient({
-        accessToken: config.WHATSAPP_ACCESS_TOKEN,
+        accessToken: getFreshAccessToken(),
         phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
       });
 

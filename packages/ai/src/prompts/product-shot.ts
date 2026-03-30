@@ -124,4 +124,33 @@ export function buildScenePrompt(
   return prompt;
 }
 
+// ---------------------------------------------------------------------------
+// Kontext Pro prompt builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a Flux Kontext Pro prompt.
+ *
+ * Kontext Pro is an image-editing model — it takes the input image and modifies
+ * it according to the prompt. The key difference from Bria is that we must
+ * EXPLICITLY instruct it to keep the product unchanged and only change the
+ * background/scene.
+ */
+export function buildKontextPrompt(
+  style: string,
+  productCategory: string,
+  voiceInstructions?: string
+): string {
+  const sceneDesc = buildScenePrompt(style, productCategory);
+
+  // Kontext prompt structure: preserve product, change only background
+  let prompt = `Keep the product exactly as it is — same shape, color, texture, material, and proportions. Do not alter, regenerate, or stylize the product in any way. Only change the background and surroundings. Place the product on: ${sceneDesc}. The product should look naturally placed in the scene with appropriate lighting and shadows. Professional product photography quality.`;
+
+  if (voiceInstructions && voiceInstructions.trim().length > 0) {
+    prompt = `${prompt} Additional instructions: ${voiceInstructions.trim()}`;
+  }
+
+  return prompt;
+}
+
 export type { StyleId, ProductCategory };

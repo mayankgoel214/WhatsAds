@@ -6,6 +6,8 @@
  */
 
 import type { Job } from 'bullmq';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import { prisma } from '@whatsads/db';
 import type { ImageJob } from '@whatsads/db';
 import { processProductImage } from '@whatsads/ai';
@@ -14,6 +16,16 @@ import { WhatsAppClient } from '@whatsads/whatsapp';
 import { sendProcessedImages } from '@whatsads/session';
 import { ImageProcessingJobDataSchema } from '@whatsads/queue';
 import { getConfig } from '../config.js';
+
+function getFreshAccessToken(): string {
+  try {
+    const envPath = resolve(process.cwd(), '.env');
+    const content = readFileSync(envPath, 'utf-8');
+    const match = content.match(/^WHATSAPP_ACCESS_TOKEN=(.+)$/m);
+    if (match?.[1]) return match[1].trim();
+  } catch {}
+  return getConfig().WHATSAPP_ACCESS_TOKEN;
+}
 
 export async function processImageJob(job: Job): Promise<void> {
   const config = getConfig();
@@ -78,7 +90,7 @@ export async function processImageJob(job: Job): Promise<void> {
         cutoutUrl,
         qaScore: result.qaScore,
         qaAttempts: result.attempts,
-        pipeline: result.pipeline === 'primary' ? 'primary' : 'fallback',
+        pipeline: result.pipeline,
         durationMs: result.durationMs,
         completedAt: new Date(),
       },
@@ -126,7 +138,7 @@ export async function processImageJob(job: Job): Promise<void> {
         });
 
         const wa = new WhatsAppClient({
-          accessToken: config.WHATSAPP_ACCESS_TOKEN,
+          accessToken: getFreshAccessToken(),
           phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
         });
 

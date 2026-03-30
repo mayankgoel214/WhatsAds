@@ -1,3 +1,7 @@
+import { config as loadEnv } from 'dotenv';
+import { resolve } from 'path';
+loadEnv({ path: resolve(import.meta.dirname, '../../../.env'), override: true });
+
 import { Worker } from 'bullmq';
 import { getRedisConnection } from '@whatsads/queue';
 import { QueueNames } from '@whatsads/queue';
@@ -10,7 +14,7 @@ async function main() {
   const config = getConfig();
   const connection = getRedisConnection();
 
-  console.log(`WhatsAds Worker starting (${config.NODE_ENV})`);
+  console.log(`Clickkar Worker starting (${config.NODE_ENV})`);
 
   // Image processing worker — concurrency 3
   const imageWorker = new Worker(

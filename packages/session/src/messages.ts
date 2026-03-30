@@ -12,9 +12,9 @@ type Lang = 'hi' | 'en';
 
 export function msgWelcome(lang: Lang): string {
   if (lang === 'hi') {
-    return 'Namaste! 🙏 WhatsAds mein aapka swagat hai.\nAapka product photo 60 second mein professional bana denge.\nPehli baar bilkul free!';
+    return 'Namaste! 🙏 Clickkar mein aapka swagat hai.\nAapka product photo 60 second mein professional bana denge.\nPehli baar bilkul free!';
   }
-  return 'Welcome to WhatsAds! 🙏\nWe turn your product photo professional in 60 seconds.\nFirst photo is completely free!';
+  return 'Welcome to Clickkar! 🙏\nWe turn your product photo professional in 60 seconds.\nFirst photo is completely free!';
 }
 
 export function msgAskLanguage(_lang: Lang): string {
@@ -255,9 +255,9 @@ export function msgAskFeedback(lang: Lang): string {
 
 export function msgThankYou(lang: Lang, _userName?: string): string {
   if (lang === 'hi') {
-    return 'Bahut shukriya! 🙏\nApne doston ko WhatsAds ke baare mein batayein aur unhe bhi free photo dilaayein!';
+    return 'Bahut shukriya! 🙏\nApne doston ko Clickkar ke baare mein batayein aur unhe bhi free photo dilaayein!';
   }
-  return 'Thank you so much! 🙏\nTell your friends about WhatsAds and get them a free photo too!';
+  return 'Thank you so much! 🙏\nTell your friends about Clickkar and get them a free photo too!';
 }
 
 // ---------------------------------------------------------------------------

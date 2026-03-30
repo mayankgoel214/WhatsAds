@@ -11,17 +11,18 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "bullmq": "^5.0.0",
-    "ioredis": "^5.4.0",
-    "zod": "^3.23.0",
+    "@prisma/client": "~6.6.0",
     "@whatsads/ai": "workspace:*",
-    "@whatsads/queue": "workspace:*",
     "@whatsads/db": "workspace:*",
-    "@whatsads/whatsapp": "workspace:*",
-    "@whatsads/storage": "workspace:*",
     "@whatsads/payment": "workspace:*",
+    "@whatsads/queue": "workspace:*",
     "@whatsads/session": "workspace:*",
+    "@whatsads/storage": "workspace:*",
+    "@whatsads/whatsapp": "workspace:*",
+    "bullmq": "^5.0.0",
+    "dotenv": "^17.3.1",
+    "ioredis": "^5.4.0",
     "prisma": "~6.6.0",
-    "@prisma/client": "~6.6.0"
+    "zod": "^3.23.0"
   }
 }

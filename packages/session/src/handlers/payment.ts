@@ -211,13 +211,29 @@ async function sendPaymentLink(
     return;
   }
 
+  // DEV MODE: Skip payment and simulate confirmation
+  if (process.env.NODE_ENV !== 'production') {
+    logger.info('DEV MODE: Skipping payment, auto-confirming order', {
+      phoneNumber,
+      orderId: order.id,
+    });
+    await waClient.sendText(
+      phoneNumber,
+      lang === 'hi'
+        ? '🧪 Dev mode: Payment skip ho gaya. Processing shuru ho rahi hai...'
+        : '🧪 Dev mode: Payment skipped. Starting processing...',
+    );
+    await onPaymentConfirmed(order.id, 'dev_payment_' + Date.now(), waClient);
+    return;
+  }
+
   try {
     const link = await createPaymentLink({
       orderId: order.id,
       customerPhone: phoneNumber,
       customerName: user.name ?? undefined,
       amount: order.amount, // paise — from DB, never client-provided
-      description: `WhatsAds - ${order.imageCount} photo(s)`,
+      description: `Clickkar - ${order.imageCount} photo(s)`,
       expiresInMinutes: 30,
     });
 

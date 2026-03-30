@@ -180,7 +180,18 @@ async function downloadAndStore(
   waClient: WhatsAppClient,
 ): Promise<string> {
   // Step 1: Retrieve the download URL from the Graph API
-  const accessToken = process.env['WHATSAPP_ACCESS_TOKEN'];
+  // Read token fresh from .env to avoid stale tokens after rotation
+  const accessToken = (() => {
+    try {
+      const { readFileSync } = require('fs');
+      const { resolve } = require('path');
+      const envPath = resolve(process.cwd(), '.env');
+      const content = readFileSync(envPath, 'utf-8');
+      const match = content.match(/^WHATSAPP_ACCESS_TOKEN=(.+)$/m);
+      if (match?.[1]) return match[1].trim();
+    } catch {}
+    return process.env['WHATSAPP_ACCESS_TOKEN'];
+  })();
   const apiVersion = process.env['WHATSAPP_API_VERSION'] ?? 'v21.0';
 
   if (!accessToken) {

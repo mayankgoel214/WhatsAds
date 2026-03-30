@@ -31,7 +31,9 @@ export {
 
 export {
   checkOutputQuality,
+  checkOutputWithReference,
   type OutputAssessment,
+  type ComparativeAssessment,
 } from './qa/output-check.js';
 
 // ---------------------------------------------------------------------------
@@ -60,6 +62,7 @@ export {
 
 export {
   buildScenePrompt,
+  buildKontextPrompt,
   type StyleId,
   type ProductCategory,
 } from './prompts/product-shot.js';

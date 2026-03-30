@@ -250,7 +250,7 @@ async function setupTestDatabase(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function runConversation(): Promise<void> {
-  console.log('WhatsAds -- Test Conversation Simulator');
+  console.log('Clickkar -- Test Conversation Simulator');
   console.log('Phone:', TEST_PHONE);
   console.log('Database URL:', (process.env['DATABASE_URL'] ?? '').slice(0, 50) + '...');
   console.log();
