@@ -37,6 +37,7 @@ import { processProductImage } from '../packages/ai/dist/index.js';
 // Test config — public product image (leather bag)
 // ---------------------------------------------------------------------------
 
+// Leather bag — luxury product (has GG logo = branded = Track A)
 const TEST_IMAGE_URL =
   'https://images.unsplash.com/photo-1548036328-c9fa89d128fa?w=800&q=80';
 

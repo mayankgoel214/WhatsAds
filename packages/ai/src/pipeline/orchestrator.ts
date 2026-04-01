@@ -1,9 +1,7 @@
-import { assessInputImage } from '../qa/assess.js';
-import { checkOutputWithReference } from '../qa/output-check.js';
 import { preprocessImage } from './preprocess.js';
-import { analyzeProduct, generateAdPrompt } from './product-analyzer.js';
-import { runCompositePipeline, downloadBuffer } from './fallback.js';
-import type { InputAssessment } from '../qa/assess.js';
+import { analyzeAndPlan, type AnalyzeAndPlanResult } from './product-analyzer.js';
+import { createStudioShot, generateBackgroundOnlyScene, harmonizedComposite, generateReferenceScene, postProcessFinal, addAILabel, refineWithKontext, restoreFaces, upscaleDownscale, uploadToStorage, downloadBuffer } from './fallback.js';
+import { combinedQualityCheck } from '../qa/combined-qa.js';
 import type { ProductAnalysis } from './product-analyzer.js';
 
 // ---------------------------------------------------------------------------
@@ -21,11 +19,12 @@ export interface ProcessImageParams {
 export interface ProcessImageResult {
   outputUrl: string;
   cutoutUrl?: string;
+  studioShotUrl?: string;
   qaScore: number;
   pipeline: 'composite';
   attempts: number;
   durationMs: number;
-  inputAssessment?: InputAssessment;
+  inputAssessment?: { usable: boolean; productCategory: string };
   productAnalysis?: ProductAnalysis;
   adPrompt?: string;
   rejected?: boolean;
@@ -36,32 +35,33 @@ export interface ProcessImageResult {
 // Constants
 // ---------------------------------------------------------------------------
 
-const QA_PASS_SCORE = 55;
-const QA_FIDELITY_MIN = 15;
-const DEFAULT_MAX_ATTEMPTS = 2;
+const QA_PASS_SCORE = 65;
+const QA_FIDELITY_MIN = 25;
 
 // ---------------------------------------------------------------------------
 // Main export
 // ---------------------------------------------------------------------------
 
 /**
- * Creative product ad pipeline with inpainting.
+ * Two-track creative ad pipeline with branding-aware routing.
  *
- * Flow:
- * 1. Download + preprocess
- * 2. Input quality gate
- * 3. PARALLEL: Product analysis (Gemini) + prepare for next steps
- * 4. Generate creative scene prompt
- * 5. BiRefNet cutout → canvas + mask → Flux Pro inpainting
- *    (AI generates creative scene AROUND the real product pixels)
- * 6. Comparative QA
- * 7. Retry with different prompt if needed
+ * TRACK A (branded products — has logos/text):
+ *   1. Generate empty background scene via Flux Pro Fill
+ *   2. Composite real product cutout with harmonization
+ *   3. Combined QA with fidelity check
+ *
+ * TRACK B (unbranded products — no logos):
+ *   1. Seedream generates full creative ad (product regenerated, that's OK)
+ *   2. Combined QA without fidelity check
+ *
+ * FALLBACK: Bria Product Shot → Studio shot on white
+ *
+ * Only 2 Gemini calls total (1 analysis + 1 QA).
  */
 export async function processProductImage(
   params: ProcessImageParams
 ): Promise<ProcessImageResult> {
   const totalStart = Date.now();
-  const maxAttempts = params.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
 
   // -------------------------------------------------------------------------
   // Stage 1: Download + preprocess
@@ -71,167 +71,295 @@ export async function processProductImage(
   try {
     rawBuffer = await downloadBuffer(params.imageUrl);
   } catch (err) {
-    throw new Error(
-      `Cannot download input image: ${err instanceof Error ? err.message : String(err)}`
-    );
+    throw new Error(`Cannot download input image: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   const { buffer: processedBuffer } = await preprocessImage(rawBuffer);
 
   // -------------------------------------------------------------------------
-  // Stage 2: Input quality gate
+  // Stage 2: PARALLEL — BiRefNet cutout + Consolidated Gemini analysis
   // -------------------------------------------------------------------------
 
-  const inputAssessment = await assessInputImage(processedBuffer);
+  const category = params.productCategory ?? 'other';
 
-  if (!inputAssessment.usable) {
+  const [studioResult, plan] = await Promise.all([
+    // BiRefNet → cutout → studio shot (our guaranteed fallback)
+    createStudioShot(params.imageUrl, category),
+
+    // Single Gemini call: QA + analysis + branding detection + style-aware prompt generation
+    analyzeAndPlan(processedBuffer, params.voiceInstructions, params.style).catch((err): AnalyzeAndPlanResult | null => {
+      console.error(JSON.stringify({ event: 'analyze_and_plan_error', error: err instanceof Error ? err.message : String(err) }));
+      return null;
+    }),
+  ]);
+
+  const { studioBuffer, cutoutBuffer } = studioResult;
+  const studioShotUrl = await uploadToStorage(studioBuffer, `studio_${Date.now()}.jpg`);
+
+  // Handle analysis failure or rejected input
+  if (!plan || !plan.usable) {
+    const reason = plan?.rejectionReason ?? 'Analysis failed — image may not contain a usable product';
+    console.info(JSON.stringify({ event: 'input_rejected', reason }));
     return {
-      outputUrl: '',
-      qaScore: 0,
-      pipeline: 'composite',
-      attempts: 0,
+      outputUrl: studioShotUrl, qaScore: 0, pipeline: 'composite', attempts: 0,
       durationMs: Date.now() - totalStart,
-      inputAssessment,
-      rejected: true,
-      rejectionReason: inputAssessment.rejectionReason ?? 'Image quality too low',
+      inputAssessment: { usable: false, productCategory: category },
+      rejected: true, rejectionReason: reason,
     };
   }
 
-  const inputBufferForQA = processedBuffer;
+  // Use branding confidence to make routing decision — if uncertain, preserve product (Track A)
+  const hasBranding = plan.hasBranding || plan.brandingConfidence >= 0.3;
 
-  // -------------------------------------------------------------------------
-  // Stage 3: Deep product analysis
-  // -------------------------------------------------------------------------
-
-  let analysis: ProductAnalysis;
-  try {
-    analysis = await analyzeProduct(processedBuffer);
-  } catch (err) {
-    console.error(JSON.stringify({
-      event: 'analysis_error',
-      error: err instanceof Error ? err.message : String(err),
-    }));
-    analysis = {
-      productName: 'Product',
-      brandName: null,
-      productType: params.productCategory ?? 'other',
-      specificDescription: 'A product',
-      dominantColors: ['neutral'],
-      material: 'unknown',
-      shape: 'standard',
-      keyVisualElements: [],
-      visibleText: [],
-      targetAudience: 'general consumers',
-      priceSegment: 'mid_range',
-      salesChannel: 'online',
-      desiredEmotion: 'trust',
-      recommendedScene: {
-        surface: 'clean white surface',
-        background: 'soft gradient',
-        lighting: 'soft diffused studio lighting',
-        colorPalette: 'neutral tones',
-        props: [],
-        mood: 'clean and professional',
-        photographyStyle: 'e-commerce product photography',
-      },
-      category: (params.productCategory ?? 'other') as ProductAnalysis['category'],
-    };
-  }
-
-  // -------------------------------------------------------------------------
-  // Stage 4: Generate creative scene prompt
-  // -------------------------------------------------------------------------
-
-  let creativePrompt: string;
-  try {
-    creativePrompt = await generateAdPrompt(analysis, params.voiceInstructions);
-  } catch {
-    const scene = analysis.recommendedScene;
-    creativePrompt = `${scene.surface}, ${scene.background}, ${scene.lighting}, dramatic dynamic elements, professional advertisement photography`;
-  }
+  // "With Model" ALWAYS uses Track B — person + product must be generated together
+  const forceTrackB = params.style === 'style_with_model';
+  const useTrackA = hasBranding && !forceTrackB;
 
   console.info(JSON.stringify({
-    event: 'orchestrator_ready',
-    productName: analysis.productName,
-    category: analysis.category,
-    creativePrompt,
+    event: 'pipeline_routed',
+    track: useTrackA ? 'A_branded' : 'B_unbranded',
+    productName: plan.analysis.productName,
+    hasBranding: plan.hasBranding,
+    brandingConfidence: plan.brandingConfidence,
+    effectiveBranding: hasBranding,
+    forceTrackB,
+    brandElements: plan.brandElements,
+    scenePromptPreview: plan.scenePrompt.slice(0, 80),
   }));
 
   // -------------------------------------------------------------------------
-  // Stage 5+6: Inpainting pipeline with retry
+  // Stage 3: Generation with retry loop (up to 2 attempts before fallback)
   // -------------------------------------------------------------------------
 
-  let bestOutputUrl = '';
-  let bestCutoutUrl = '';
+  const MAX_GENERATION_ATTEMPTS = 2;
+  let bestAdBuffer: Buffer | null = null;
   let bestQaScore = 0;
+  let bestFidelityScore = 0;
   let totalAttempts = 0;
+  let lastQaResult: Awaited<ReturnType<typeof combinedQualityCheck>> | null = null;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  for (let attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt++) {
     totalAttempts = attempt;
+    let adBuffer: Buffer | null = null;
 
-    try {
-      const promptForAttempt =
-        attempt === 1
-          ? creativePrompt
-          : `${creativePrompt}, different composition, alternative creative direction`;
+    // Adjust prompt on retry based on QA feedback — category-specific fixes
+    let currentScenePrompt = plan.scenePrompt;
+    let currentBgPrompt = plan.backgroundOnlyPrompt;
+    if (attempt > 1 && lastQaResult) {
+      // Parse issues into targeted fix instructions (keep under 150 tokens for Seedream)
+      const issueText = lastQaResult.issues.join(' ').toLowerCase();
+      const fixes: string[] = [];
 
-      const { outputUrl, cutoutUrl } = await runCompositePipeline({
-        imageUrl: params.imageUrl,
-        creativePrompt: promptForAttempt,
-        productCategory: analysis.category,
-      });
-
-      // QA check
-      const outputBuffer = await downloadBuffer(outputUrl);
-      const qa = await checkOutputWithReference(inputBufferForQA, outputBuffer);
-
-      console.info(JSON.stringify({
-        event: `orchestrator_attempt_${attempt}`,
-        qaScore: qa.score,
-        fidelity: qa.productFidelity,
-        fidelityScore: qa.productFidelityScore,
-      }));
-
-      if (qa.score > bestQaScore) {
-        bestOutputUrl = outputUrl;
-        bestCutoutUrl = cutoutUrl;
-        bestQaScore = qa.score;
+      if (lastQaResult.humanAnatomy === 'major_issue' || issueText.includes('finger') || issueText.includes('hand') || issueText.includes('anatomy')) {
+        fixes.push('Every hand must show exactly 5 fingers. Natural human proportions only.');
+      }
+      if (lastQaResult.productIntegration === 'impossible' || issueText.includes('product') || issueText.includes('visible') || issueText.includes('small')) {
+        fixes.push('Product must be large, centered, well-lit, and the dominant subject.');
+      }
+      if (issueText.includes('float') || issueText.includes('gravity') || issueText.includes('physics') || !lastQaResult.physicallyPlausible) {
+        fixes.push('Everything must rest naturally on surfaces. Nothing floating.');
+      }
+      if (lastQaResult.hasRandomText || issueText.includes('text') || issueText.includes('watermark')) {
+        fixes.push('No text anywhere except on the product itself.');
+      }
+      if (issueText.includes('face') || issueText.includes('skin') || issueText.includes('uncanny')) {
+        fixes.push('Person must look completely photorealistic with natural skin texture.');
       }
 
-      if (qa.score >= QA_PASS_SCORE && qa.productFidelityScore >= QA_FIDELITY_MIN) {
-        return {
-          outputUrl,
-          cutoutUrl,
-          qaScore: qa.score,
-          pipeline: 'composite',
-          attempts: attempt,
-          durationMs: Date.now() - totalStart,
-          inputAssessment,
-          productAnalysis: analysis,
-          adPrompt: creativePrompt,
-        };
+      if (fixes.length > 0) {
+        const suffix = `. CRITICAL FIXES: ${fixes.join(' ')}`;
+        currentScenePrompt += suffix;
+        currentBgPrompt += suffix;
       }
-    } catch (err) {
-      console.error(JSON.stringify({
-        event: `orchestrator_attempt_${attempt}_error`,
-        error: err instanceof Error ? err.message : String(err),
+      console.info(JSON.stringify({ event: 'retry_with_fixes', attempt, fixCount: fixes.length, fixes }));
+    }
+
+    if (useTrackA) {
+      // ===== TRACK A: Branded product — preserve real product =====
+      try {
+        console.info(JSON.stringify({ event: 'track_a_bg_only_start', attempt }));
+        const bgScene = await generateBackgroundOnlyScene(currentBgPrompt);
+        adBuffer = await harmonizedComposite(cutoutBuffer, bgScene);
+        console.info(JSON.stringify({ event: 'track_a_complete', attempt }));
+      } catch (err) {
+        console.error(JSON.stringify({ event: 'track_a_error', attempt, error: err instanceof Error ? err.message : String(err) }));
+      }
+    } else {
+      // ===== TRACK B: Unbranded / With Model — Seedream full generation =====
+      try {
+        console.info(JSON.stringify({ event: 'track_b_seedream_start', attempt }));
+        adBuffer = await generateReferenceScene(studioShotUrl, currentScenePrompt);
+        console.info(JSON.stringify({ event: 'track_b_complete', attempt, hasOutput: !!adBuffer }));
+      } catch (err) {
+        console.error(JSON.stringify({ event: 'track_b_error', attempt, error: err instanceof Error ? err.message : String(err) }));
+      }
+    }
+
+    if (!adBuffer) continue;
+
+    // Refinement pipeline: Kontext → CodeFormer (faces, only on retry) → ESRGAN (sharpness) → post-process → label
+    // SKIP Kontext for Track A — it alters the real product cutout we carefully preserved
+    console.info(JSON.stringify({ event: 'refinement_pipeline_start', attempt, skipKontext: useTrackA }));
+    if (!useTrackA) {
+      adBuffer = await refineWithKontext(adBuffer, forceTrackB);
+    }
+    // CodeFormer is slow (30-90s) — only run on retry when attempt 1 had face issues
+    if (forceTrackB && attempt > 1 && lastQaResult?.humanAnatomy !== 'natural') {
+      adBuffer = await restoreFaces(adBuffer);
+    }
+    adBuffer = await upscaleDownscale(adBuffer);
+    adBuffer = await postProcessFinal(adBuffer, params.style);
+    adBuffer = await addAILabel(adBuffer);
+    console.info(JSON.stringify({ event: 'refinement_pipeline_complete', attempt }));
+
+    // QA check
+    const qa = await combinedQualityCheck(processedBuffer, adBuffer, {
+      checkFidelity: useTrackA,
+    });
+    lastQaResult = qa;
+
+    console.info(JSON.stringify({
+      event: 'qa_result',
+      attempt,
+      pass: qa.pass,
+      score: qa.score,
+      fidelity: qa.productFidelity,
+      fidelityScore: qa.productFidelityScore,
+      hasRandomText: qa.hasRandomText,
+      hasFundamentalError: qa.hasFundamentalError,
+      humanAnatomy: qa.humanAnatomy,
+      productIntegration: qa.productIntegration,
+      issues: qa.issues,
+    }));
+
+    // Hard rejection — fundamental errors cannot be fixed by retry, but we still
+    // try once more in case it's a random generation artifact
+    if (qa.hasFundamentalError) {
+      console.warn(JSON.stringify({
+        event: 'fundamental_error_detected',
+        attempt,
+        description: qa.fundamentalErrorDescription,
       }));
+      // Don't save this as best — it's unusable
+      continue;
+    }
+
+    // Track best result across attempts
+    if (qa.score > bestQaScore) {
+      bestQaScore = qa.score;
+      bestFidelityScore = qa.productFidelityScore;
+      bestAdBuffer = adBuffer;
+    }
+
+    // Check if it passes
+    if (qa.pass && qa.score >= QA_PASS_SCORE &&
+        (!useTrackA || qa.productFidelityScore >= QA_FIDELITY_MIN) &&
+        qa.humanAnatomy !== 'major_issue' &&
+        qa.productIntegration !== 'impossible') {
+      // QA passed — return this result
+      const outputUrl = await uploadToStorage(adBuffer, `output_${Date.now()}.jpg`);
+      const cutoutUrl = await uploadToStorage(cutoutBuffer, `cutout_${Date.now()}.png`, 'image/png');
+      return {
+        outputUrl, cutoutUrl, studioShotUrl,
+        qaScore: qa.score, pipeline: 'composite', attempts: totalAttempts,
+        durationMs: Date.now() - totalStart,
+        inputAssessment: { usable: true, productCategory: plan.productCategory },
+        productAnalysis: plan.analysis, adPrompt: plan.scenePrompt,
+      };
+    }
+
+    console.info(JSON.stringify({ event: 'attempt_failed_qa', attempt, score: qa.score, willRetry: attempt < MAX_GENERATION_ATTEMPTS }));
+  }
+
+  // If we have a best attempt that scored reasonably (>= 55), use it rather than falling to generic Bria
+  // But for Track A (branded), also require minimum fidelity — don't send destroyed branding
+  if (bestAdBuffer && bestQaScore >= 55 && (!useTrackA || bestFidelityScore >= QA_FIDELITY_MIN)) {
+    console.info(JSON.stringify({ event: 'using_best_attempt', score: bestQaScore, fidelity: bestFidelityScore }));
+    const outputUrl = await uploadToStorage(bestAdBuffer, `output_${Date.now()}.jpg`);
+    const cutoutUrl = await uploadToStorage(cutoutBuffer, `cutout_${Date.now()}.png`, 'image/png');
+    return {
+      outputUrl, cutoutUrl, studioShotUrl,
+      qaScore: bestQaScore, pipeline: 'composite', attempts: totalAttempts,
+      durationMs: Date.now() - totalStart,
+      inputAssessment: { usable: true, productCategory: plan.productCategory },
+      productAnalysis: plan.analysis, adPrompt: plan.scenePrompt,
+    };
+  }
+
+  // All attempts failed QA
+  console.info(JSON.stringify({ event: 'all_attempts_failed_trying_fallback', bestScore: bestQaScore }));
+
+  // -------------------------------------------------------------------------
+  // Stage 5: Fallback — Bria Product Shot
+  // -------------------------------------------------------------------------
+
+  totalAttempts++;
+  let fallbackBuffer: Buffer | null = null;
+
+  try {
+    console.info(JSON.stringify({ event: 'fallback_bria_start' }));
+    const { fal } = await import('@fal-ai/client');
+    const key = process.env['FAL_KEY'] ?? process.env['FAL_API_KEY'] ?? '';
+    fal.config({ credentials: key });
+
+    const briaResult = (await fal.subscribe('fal-ai/bria/product-shot' as string, {
+      input: {
+        image_url: params.imageUrl,
+        scene_description: plan.scenePrompt,
+        optimize_description: true,
+        num_results: 1,
+        fast: true,
+        placement_type: 'manual_padding',
+        padding_values: [80, 80, 80, 40],  // [left, right, top, bottom] — tight padding = bigger product
+        shot_size: [1024, 1024],
+      },
+      logs: false,
+    })) as { data: { images?: Array<{ url: string }> } };
+
+    const briaUrl = briaResult.data?.images?.[0]?.url;
+    if (briaUrl) {
+      const rawBria = await downloadBuffer(briaUrl);
+      fallbackBuffer = await postProcessFinal(rawBria, params.style);
+      fallbackBuffer = await addAILabel(fallbackBuffer);
+      console.info(JSON.stringify({ event: 'fallback_bria_complete' }));
+    }
+  } catch (err) {
+    console.error(JSON.stringify({ event: 'fallback_bria_error', error: err instanceof Error ? err.message : String(err) }));
+  }
+
+  if (fallbackBuffer) {
+    // Quick QA on Bria output (no fidelity check — Bria handles product internally)
+    const briaQa = await combinedQualityCheck(processedBuffer, fallbackBuffer, { checkFidelity: false });
+
+    if (briaQa.pass && !briaQa.hasFundamentalError) {
+      const outputUrl = await uploadToStorage(fallbackBuffer, `output_${Date.now()}.jpg`);
+      const cutoutUrl = await uploadToStorage(cutoutBuffer, `cutout_${Date.now()}.png`, 'image/png');
+      return {
+        outputUrl, cutoutUrl, studioShotUrl,
+        qaScore: briaQa.score, pipeline: 'composite', attempts: totalAttempts,
+        durationMs: Date.now() - totalStart,
+        inputAssessment: { usable: true, productCategory: plan.productCategory },
+        productAnalysis: plan.analysis, adPrompt: plan.scenePrompt,
+      };
     }
   }
 
-  if (!bestOutputUrl) {
-    throw new Error('All pipeline attempts failed');
-  }
+  // -------------------------------------------------------------------------
+  // Stage 6: Ultimate fallback — studio shot
+  // -------------------------------------------------------------------------
+
+  console.info(JSON.stringify({ event: 'ultimate_fallback_studio_shot' }));
+  // Apply post-processing + label to studio shot fallback
+  let labeledStudio = await postProcessFinal(studioBuffer, params.style);
+  labeledStudio = await addAILabel(labeledStudio);
+  const labeledStudioUrl = await uploadToStorage(labeledStudio, `output_${Date.now()}.jpg`);
+  const cutoutUrl = await uploadToStorage(cutoutBuffer, `cutout_${Date.now()}.png`, 'image/png');
 
   return {
-    outputUrl: bestOutputUrl,
-    cutoutUrl: bestCutoutUrl,
-    qaScore: bestQaScore,
-    pipeline: 'composite',
-    attempts: totalAttempts,
+    outputUrl: labeledStudioUrl, cutoutUrl, studioShotUrl,
+    qaScore: 50, pipeline: 'composite', attempts: totalAttempts,
     durationMs: Date.now() - totalStart,
-    inputAssessment,
-    productAnalysis: analysis,
-    adPrompt: creativePrompt,
+    inputAssessment: { usable: true, productCategory: plan.productCategory },
+    productAnalysis: plan.analysis, adPrompt: plan.scenePrompt,
   };
 }

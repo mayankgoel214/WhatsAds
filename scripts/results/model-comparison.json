@@ -1,0 +1,74 @@
+[
+  {
+    "product": "leather-bag",
+    "results": [
+      {
+        "model": "Flux Pro Fill (inpaint)",
+        "url": null,
+        "durationMs": 2662,
+        "cost": "~$0.05",
+        "error": "Error: Cannot find package 'sharp' imported from /Users/lending/WhatsAds/scripts/test-model-comparison.ts\nDid you mean to import \"sharp/lib/index.js\"?"
+      },
+      {
+        "model": "Bria Product Shot",
+        "url": "https://v3b.fal.media/files/b/0a944c27/HAaR4glkMVhtxUOS7hsif_bd9f6b94c2214e41afb6d313e7bee9d7.png",
+        "durationMs": 14187,
+        "cost": "~$0.04"
+      },
+      {
+        "model": "fal Product Photography",
+        "url": "https://v3b.fal.media/files/b/0a944c31/k-zBcebJjhYlyG-6YfIvn_af18d58091754bb4b246a0257afa4e2d.png",
+        "durationMs": 114662,
+        "cost": "~$0.04"
+      },
+      {
+        "model": "Seedream v4.5 Edit",
+        "url": "https://v3b.fal.media/files/b/0a944c28/LcweUjkw1uNCUQhnnhDbT_54f07c83472049d880a4705cc1e7ce3a.png",
+        "durationMs": 25530,
+        "cost": "~$0.04"
+      },
+      {
+        "model": "Recraft V3",
+        "url": "https://v3b.fal.media/files/b/0a944c27/5i3qhP8EtFE0TdyL41b2F_image.webp",
+        "durationMs": 9114,
+        "cost": "~$0.04"
+      }
+    ]
+  },
+  {
+    "product": "gummy-bears",
+    "results": [
+      {
+        "model": "Flux Pro Fill (inpaint)",
+        "url": null,
+        "durationMs": 2366,
+        "cost": "~$0.05",
+        "error": "Error: Cannot find package 'sharp' imported from /Users/lending/WhatsAds/scripts/test-model-comparison.ts\nDid you mean to import \"sharp/lib/index.js\"?"
+      },
+      {
+        "model": "Bria Product Shot",
+        "url": "https://v3b.fal.media/files/b/0a944c32/PoRVHTPtgXh1kZlmRuDG6_33c3c8c0b9784704b8c05d44fe54cd78.png",
+        "durationMs": 11789,
+        "cost": "~$0.04"
+      },
+      {
+        "model": "fal Product Photography",
+        "url": "https://v3b.fal.media/files/b/0a944c35/zGQxE5cM-6BfiiK0kD7Wy_bf5b4db59cfc47e5819fd6759389dada.png",
+        "durationMs": 32794,
+        "cost": "~$0.04"
+      },
+      {
+        "model": "Seedream v4.5 Edit",
+        "url": "https://v3b.fal.media/files/b/0a944c34/qKb5hkhy6ZETCNJRqWyuE_fdf4958692e64953bade9567db60293c.png",
+        "durationMs": 25875,
+        "cost": "~$0.04"
+      },
+      {
+        "model": "Recraft V3",
+        "url": "https://v3b.fal.media/files/b/0a944c32/XFyCGxjha-zxGRbNyjEOM_image.webp",
+        "durationMs": 8967,
+        "cost": "~$0.04"
+      }
+    ]
+  }
+]

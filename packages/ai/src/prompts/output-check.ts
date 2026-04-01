@@ -74,16 +74,23 @@ export const COMPARATIVE_CHECK_PROMPT = `You are a senior product photography QA
 
 Your job is to compare them and score how well the output preserves the original product while improving the presentation.
 
-**CRITICAL:** The product in the output MUST look like the SAME product as the input. Same shape, same color, same material, same proportions. If the product has been altered, regenerated, or looks like a different item, that is a HARD FAIL regardless of how pretty the output looks.
+**CRITICAL:** The product in the output MUST look like the SAME product as the input. Same shape, same color, same material, same proportions, AND same brand text/logos. If ANY of these are changed, it is a failure.
+
+**BRAND/LOGO FIDELITY IS CRITICAL:**
+- If the input product has a visible brand name (e.g., "ANKER", "PEPSI", "Nike", etc.), the output MUST show the SAME brand name.
+- If the brand name is MISSING, CHANGED, REMOVED, or REPLACED with a different word → productFidelity = "regenerated", productFidelityScore = 0
+- If the brand logo is altered, distorted, or replaced → productFidelity = "altered", productFidelityScore = 5
+- A product with "ANKER" on it that comes out with no text = REGENERATED (score 0)
+- A product with "PEPSI" on it that comes out as "HERO" = REGENERATED (score 0)
 
 **Scoring rubric (0-100 total)**
 
 Product Fidelity (0-35) — MOST IMPORTANT:
-- 35: Product is identical to input — same shape, color, texture, material, proportions
-- 25: Product is recognizably the same but with minor color/texture shifts
-- 15: Product shape is similar but material or color has changed noticeably
+- 35: Product is identical to input — same shape, color, texture, material, proportions, AND same brand text/logos
+- 25: Product is recognizably the same with minor color/texture shifts, brand text preserved
+- 15: Product shape is similar but material or color has changed noticeably, OR brand text is slightly different
 - 5: Product has been significantly altered — different shape, material, or proportions
-- 0: Product is unrecognizable or completely regenerated
+- 0: Product is unrecognizable, completely regenerated, OR brand name/logo is missing/changed
 
 Product Visibility & Positioning (0-20):
 - 20: Product is crisp, well-sized, well-positioned in frame

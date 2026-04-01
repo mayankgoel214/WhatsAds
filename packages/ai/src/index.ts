@@ -27,9 +27,11 @@ export {
 // ---------------------------------------------------------------------------
 
 export {
+  analyzeAndPlan,
   analyzeProduct,
   generateAdPrompt,
   type ProductAnalysis,
+  type AnalyzeAndPlanResult,
 } from './pipeline/product-analyzer.js';
 
 // ---------------------------------------------------------------------------
@@ -47,6 +49,11 @@ export {
   type OutputAssessment,
   type ComparativeAssessment,
 } from './qa/output-check.js';
+
+export {
+  combinedQualityCheck,
+  type CombinedQAResult,
+} from './qa/combined-qa.js';
 
 // ---------------------------------------------------------------------------
 // Transcription

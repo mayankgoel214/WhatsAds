@@ -55,7 +55,15 @@ Return this exact JSON structure:
     "mood": string,
     "photographyStyle": string
   },
-  "category": "food" | "jewellery" | "garment" | "skincare" | "candle" | "bag" | "home_goods" | "electronics" | "handicraft" | "other"
+  "category": "food" | "jewellery" | "garment" | "skincare" | "candle" | "bag" | "home_goods" | "electronics" | "handicraft" | "other",
+  "adBestPractices": string
 }
+
+"adBestPractices" should describe the BEST PRACTICES for advertising THIS specific type of product. The product will be placed on a FLAT SURFACE in a styled scene. What surface works best? What props should be scattered AROUND it on the surface? What lighting? What to avoid? Think like a creative director who has done 100 campaigns for this product category.
+IMPORTANT: The product must always sit ON a surface — never inside, embedded in, or floating above other objects.
+Examples:
+- For a water bottle: "Place on a wet dark slate or reflective surface. Scatter ice cubes, water droplets, and fruit slices around the bottle on the surface. Use cool backlighting. Avoid dry flat compositions."
+- For jewelry: "Place on dark velvet or polished marble surface. Scatter gold dust, loose gemstones, rose petals around it on the fabric. Use dramatic side lighting. Avoid busy backgrounds."
+- For snacks/candy: "Place on a colorful or glossy surface. Scatter the actual candy pieces, sprinkles, or ingredients around the box on the surface. Use playful warm lighting. Avoid putting the product inside other food items."
 
 Be specific and vivid in every field. Generic answers like "nice background" or "good lighting" are useless. Every field should read like a creative brief a photographer could act on immediately.`;

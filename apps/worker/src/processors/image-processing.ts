@@ -31,10 +31,13 @@ export async function processImageJob(job: Job): Promise<void> {
   const config = getConfig();
   const data = ImageProcessingJobDataSchema.parse(job.data);
 
-  const log = (msg: string, extra?: Record<string, unknown>) =>
-    console.log(JSON.stringify({ job: job.id, orderId: data.orderId, msg, ...extra }));
+  const log = (msg: string, extra?: Record<string, unknown>) => {
+    const line = JSON.stringify({ job: job.id, orderId: data.orderId, msg, ...extra });
+    console.log(line);
+    process.stdout.write(line + '\n');
+  };
 
-  log('Starting image processing');
+  log('=== STARTING IMAGE PROCESSING ===', { style: data.style, imageUrl: data.inputImageUrl.slice(0, 80) });
 
   // Update job status
   await prisma.imageJob.update({
@@ -58,20 +61,27 @@ export async function processImageJob(job: Job): Promise<void> {
       attempts: result.attempts,
     });
 
-    // Upload output to storage
-    const outputPath = `${data.orderId}/${data.imageJobId}-output.jpg`;
-    const outputBuffer = await fetch(result.outputUrl).then((r) => r.arrayBuffer());
-    const outputUrl = await uploadFile(
-      Buckets.PROCESSED_IMAGES,
-      outputPath,
-      Buffer.from(outputBuffer),
-      'image/jpeg',
-    );
+    // Use pipeline output URL directly if it's already in Supabase storage
+    // (the pipeline uploads internally via uploadToStorage)
+    let outputUrl = result.outputUrl;
+    if (!outputUrl.includes('supabase.co')) {
+      // Only re-upload if it's a temporary URL (fal.ai, data URL, etc.)
+      const outputPath = `${data.orderId}/${data.imageJobId}-output.jpg`;
+      const outputBuffer = await fetch(outputUrl).then((r) => r.arrayBuffer());
+      outputUrl = await uploadFile(
+        Buckets.PROCESSED_IMAGES,
+        outputPath,
+        Buffer.from(outputBuffer),
+        'image/jpeg',
+      );
+    }
 
-    // Upload cutout if available (skip data URLs — they're fallback placeholders)
+    // Use cutout URL directly if already in Supabase, otherwise re-upload
     let cutoutUrl: string | undefined;
     if (result.cutoutUrl && result.cutoutUrl.startsWith('http')) {
-      try {
+      if (result.cutoutUrl.includes('supabase.co')) {
+        cutoutUrl = result.cutoutUrl;
+      } else try {
         const cutoutPath = `${data.orderId}/${data.imageJobId}-cutout.png`;
         const cutoutBuffer = await fetch(result.cutoutUrl).then((r) => r.arrayBuffer());
         cutoutUrl = await uploadFile(
@@ -155,11 +165,22 @@ export async function processImageJob(job: Job): Promise<void> {
           wa,
         );
 
+        // Transition session PROCESSING → DELIVERED
+        if (user) {
+          await prisma.session.updateMany({
+            where: { userId: user.id, state: 'PROCESSING' },
+            data: { state: 'DELIVERED', stateEnteredAt: new Date() },
+          });
+          log('Session transitioned to DELIVERED');
+        }
+
         log('All images delivered', { count: completedUrls.length });
       }
     }
   } catch (err) {
-    log('Image processing failed', { error: String(err) });
+    const errorMsg = err instanceof Error ? `${err.message}\n${err.stack}` : String(err);
+    console.error('=== IMAGE PROCESSING FAILED ===', errorMsg);
+    log('Image processing failed', { error: errorMsg });
 
     // Update job as failed
     await prisma.imageJob.update({
@@ -183,16 +204,50 @@ export async function processImageJob(job: Job): Promise<void> {
       const lang = (user?.language as 'hi' | 'en') || 'hi';
 
       const wa = new WhatsAppClient({
-        accessToken: config.WHATSAPP_ACCESS_TOKEN,
+        accessToken: getFreshAccessToken(),
         phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
       });
 
-      await wa.sendText(
-        data.phoneNumber,
-        lang === 'hi'
-          ? 'Maaf kijiye, is photo ko process karne mein dikkat aayi. Dobara try karein ya support se baat karein.'
-          : 'Sorry, we had trouble processing this photo. Please try again or contact support.',
+      // Check if ALL jobs in this order are now done (completed or failed)
+      const allJobs = await prisma.imageJob.findMany({
+        where: { orderId: data.orderId },
+      });
+      const allDone = allJobs.every(
+        (j: ImageJob) => j.status === 'completed' || j.status === 'failed',
       );
+
+      if (allDone) {
+        const completedUrls = allJobs
+          .filter((j: ImageJob) => j.status === 'completed' && j.outputImageUrl)
+          .map((j: ImageJob) => j.outputImageUrl!);
+
+        if (completedUrls.length > 0) {
+          // Some images succeeded — deliver those and note the failures
+          await sendProcessedImages(data.phoneNumber, completedUrls, lang, user?.name ?? undefined, wa);
+        } else {
+          // All images failed
+          await wa.sendText(
+            data.phoneNumber,
+            lang === 'hi'
+              ? 'Maaf kijiye, aapki photo process nahi ho payi. Kripya dobara try karein.'
+              : 'Sorry, we could not process your photo. Please try again.',
+          );
+        }
+
+        // Transition session out of PROCESSING regardless of outcome
+        if (user) {
+          await prisma.session.updateMany({
+            where: { userId: user.id, state: 'PROCESSING' },
+            data: { state: 'DELIVERED', stateEnteredAt: new Date() },
+          });
+          log('Session transitioned to DELIVERED (after failure recovery)');
+        }
+
+        await prisma.order.update({
+          where: { id: data.orderId },
+          data: { status: completedUrls.length > 0 ? 'completed' : 'failed', processingCompletedAt: new Date() },
+        }).catch(() => {});
+      }
     }
 
     throw err; // Let BullMQ handle retries

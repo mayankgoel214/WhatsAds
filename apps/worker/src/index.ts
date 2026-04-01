@@ -3,59 +3,42 @@ import { resolve } from 'path';
 loadEnv({ path: resolve(import.meta.dirname, '../../../.env'), override: true });
 
 import { Worker } from 'bullmq';
-import { Redis } from 'ioredis';
-import { QueueNames } from '@whatsads/queue';
+import { getRedisConnection, QueueNames } from '@whatsads/queue';
 import { getConfig } from './config.js';
 import { processImageJob } from './processors/image-processing.js';
 import { processPaymentCheck } from './processors/payment-check.js';
 import { processSessionTimeout } from './processors/session-timeout.js';
 
-function createWorkerConnection(): Redis {
-  const redisUrl = process.env['REDIS_URL'];
-  if (!redisUrl) throw new Error('REDIS_URL not set');
-  const isTls = redisUrl.startsWith('rediss://');
-  return new Redis(redisUrl, {
-    maxRetriesPerRequest: null,
-    tls: isTls ? {} : undefined,
-    enableReadyCheck: false,
-    lazyConnect: false,
-  });
-}
-
 async function main() {
   const config = getConfig();
-  // Each BullMQ Worker needs its OWN Redis connection
-  const connection = createWorkerConnection();
 
   console.log(`Clickkar Worker starting (${config.NODE_ENV})`);
 
-  // Image processing worker — concurrency 3
+  // Each BullMQ Worker MUST have its own Redis connection
   const imageWorker = new Worker(
     QueueNames.IMAGE_PROCESSING,
     processImageJob,
     {
-      connection,
+      connection: getRedisConnection().duplicate(),
       concurrency: 3,
-      limiter: { max: 10, duration: 60_000 }, // Max 10 jobs per minute
+      limiter: { max: 10, duration: 60_000 },
     },
   );
 
-  // Payment check worker — concurrency 5
   const paymentWorker = new Worker(
     QueueNames.PAYMENT_CHECK,
     processPaymentCheck,
     {
-      connection,
+      connection: getRedisConnection().duplicate(),
       concurrency: 5,
     },
   );
 
-  // Session timeout worker — concurrency 10
   const sessionWorker = new Worker(
     QueueNames.SESSION_TIMEOUT,
     processSessionTimeout,
     {
-      connection,
+      connection: getRedisConnection().duplicate(),
       concurrency: 10,
     },
   );
@@ -98,7 +81,6 @@ async function main() {
       ),
     );
 
-    connection.disconnect();
     process.exit(0);
   };
 
