@@ -8,7 +8,9 @@
 import type { WhatsAppClient } from '@whatsads/whatsapp';
 import type { Session, User } from '@whatsads/db';
 import { prisma } from '@whatsads/db';
+import { uploadFile, Buckets } from '@whatsads/storage';
 import { transitionTo, updateUser } from '../db-helpers.js';
+import { downloadWhatsAppMedia, mimeToExt } from './instructions.js';
 import {
   msgAskStyle,
   styleDisplayName,
@@ -35,17 +37,30 @@ export async function handleIdle(
     if (user.lastStyleUsed) {
       const styleName = styleDisplayName(user.lastStyleUsed, lang);
 
-      // If they sent a photo directly, ask style confirmation
-      if (message.messageType === 'image') {
-        // Store photo early, ask style
+      // If they sent a photo directly, download + upload immediately, then ask style
+      if (message.messageType === 'image' && message.mediaId) {
+        let storageUrl: string | null = null;
+        try {
+          const { buffer, mimeType } = await downloadWhatsAppMedia(message.mediaId);
+          const ext = mimeToExt(mimeType);
+          const path = `${session.phoneNumber}/${Date.now()}_0${ext}`;
+          storageUrl = await uploadFile(Buckets.RAW_IMAGES, path, buffer, mimeType);
+        } catch (err) {
+          logger.error('Failed to download/upload early photo in IDLE', {
+            phoneNumber: session.phoneNumber,
+            mediaId: message.mediaId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+
         await prisma.session.update({
           where: { phoneNumber: session.phoneNumber },
           data: {
             state: 'AWAITING_PHOTO',
             stateEnteredAt: new Date(),
-            imageMediaIds: [],
-            imageStorageUrls: [],
-            earlyPhotoMediaId: message.mediaId ?? null,
+            imageMediaIds: storageUrl ? [message.mediaId] : [],
+            imageStorageUrls: storageUrl ? [storageUrl] : [],
+            earlyPhotoMediaId: null,
             styleSelection: null,
             voiceInstructions: message.caption?.trim() || null,
             currentOrderId: null,
@@ -122,7 +137,7 @@ export async function handleSetupLanguage(
     lang = message.buttonReplyId === ButtonIds.LANG_HINDI ? 'hi' : 'en';
   } else if (message.messageType === 'text' && message.text) {
     const t = message.text.trim().toLowerCase();
-    lang = (t.includes('hindi') || t.includes('hi') || t === '1') ? 'hi' : 'en';
+    lang = (t === 'hindi' || t.startsWith('hindi') || t === '1') ? 'hi' : 'en';
   }
 
   await updateUser(session.phoneNumber, { language: lang });
@@ -154,7 +169,10 @@ export async function handleSetupName(
     return;
   }
 
-  const name = rawName.charAt(0).toUpperCase() + rawName.slice(1);
+  // Sanitize: strip non-printable characters, truncate to 50 chars
+  // eslint-disable-next-line no-control-regex
+  const sanitized = rawName.replace(/[\x00-\x1F\x7F]/g, '').trim().slice(0, 50);
+  const name = sanitized.charAt(0).toUpperCase() + sanitized.slice(1);
   await updateUser(session.phoneNumber, { name });
 
   // Go straight to category — no filler message

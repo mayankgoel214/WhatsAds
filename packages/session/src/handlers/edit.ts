@@ -114,7 +114,7 @@ export async function handleAwaitingEdit(
       const transcription = await transcribeVoiceNote(buffer, mimeType);
       if (transcription.text) {
         const parsed = await parseEditInstructions(transcription.text);
-        editInstructions = transcription.text;
+        editInstructions = transcription.text.slice(0, 500);
         if (parsed.backgroundStyle) {
           editStyle = parsed.backgroundStyle;
         }
@@ -128,12 +128,12 @@ export async function handleAwaitingEdit(
   if (message.messageType === 'text' && message.text) {
     try {
       const parsed = await parseEditInstructions(message.text);
-      editInstructions = message.text;
+      editInstructions = message.text.slice(0, 500);
       if (parsed.backgroundStyle) {
         editStyle = parsed.backgroundStyle;
       }
     } catch {
-      editInstructions = message.text;
+      editInstructions = message.text.slice(0, 500);
     }
   }
 
@@ -166,7 +166,7 @@ export async function handleAwaitingEdit(
       imageJobId: editJobId,
       phoneNumber: session.phoneNumber,
       inputImageUrl: order.cutoutUrls[0] || order.inputImageUrls[0] || '',
-      style: editStyle || order.style || 'clean_white',
+      style: editStyle || order.style || 'style_clean_white',
       voiceInstructions: editInstructions ?? undefined,
       productCategory: order.productCategory ?? undefined,
       pipeline: order.cutoutUrls.length > 0 ? 'fallback' : 'primary',

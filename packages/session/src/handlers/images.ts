@@ -105,14 +105,16 @@ export async function handleAwaitingPhoto(
     const newMediaIds = [...session.imageMediaIds, message.mediaId];
 
     // If image has a caption, use it as instructions (overrides any prior instructions)
-    const instructions = message.caption?.trim() || session.voiceInstructions || null;
+    const rawCaption = message.caption?.trim();
+    const instructions = rawCaption || session.voiceInstructions || null;
+    void instructions; // used indirectly via session update below
 
     await prisma.session.update({
       where: { phoneNumber },
       data: {
         imageStorageUrls: newUrls,
         imageMediaIds: newMediaIds,
-        ...(message.caption?.trim() ? { voiceInstructions: message.caption.trim() } : {}),
+        ...(rawCaption ? { voiceInstructions: rawCaption.slice(0, 500) } : {}),
       },
     });
 
@@ -148,7 +150,7 @@ export async function handleAwaitingPhoto(
         const { transcribeVoiceNote } = await import('@whatsads/ai');
         const transcript = await transcribeVoiceNote(buffer, mimeType);
         if (transcript.text) {
-          await prisma.session.update({ where: { phoneNumber }, data: { voiceInstructions: transcript.text, earlyPhotoMediaId: null } });
+          await prisma.session.update({ where: { phoneNumber }, data: { voiceInstructions: transcript.text.slice(0, 500), earlyPhotoMediaId: null } });
           await wa.sendText(phoneNumber, lang === 'hi' ? `Samajh gaya: "${transcript.text}"\nShuru karte hain!` : `Got it: "${transcript.text}"\nLet's go!`);
         } else {
           await prisma.session.update({ where: { phoneNumber }, data: { earlyPhotoMediaId: null } });
@@ -180,8 +182,8 @@ export async function handleAwaitingPhoto(
         if (freshSession) await advanceToPayment(freshSession, user, wa, lang);
         return;
       }
-      // Store as instructions and advance
-      await prisma.session.update({ where: { phoneNumber }, data: { voiceInstructions: message.text.trim(), earlyPhotoMediaId: null } });
+      // Store as instructions and advance (cap at 500 chars)
+      await prisma.session.update({ where: { phoneNumber }, data: { voiceInstructions: message.text.trim().slice(0, 500), earlyPhotoMediaId: null } });
       await wa.sendText(phoneNumber, lang === 'hi' ? 'Samajh gaya! Shuru karte hain.' : 'Got it! Starting now.');
       const freshSession = await prisma.session.findUnique({ where: { phoneNumber } });
       if (freshSession) await advanceToPayment(freshSession, user, wa, lang);
@@ -221,7 +223,7 @@ export async function onPhotoBatchTimeout(
   // Guard: only advance if still in AWAITING_PHOTO and count hasn't grown
   if (
     session.state !== 'AWAITING_PHOTO' ||
-    session.imageStorageUrls.length < expectedImageCount
+    session.imageStorageUrls.length !== expectedImageCount
   ) {
     return;
   }
@@ -292,12 +294,9 @@ async function schedulePhotoTimeout(
   imageCount: number,
 ): Promise<void> {
   const queue = getSessionTimeoutQueue();
-  const jobId = `photo_timeout_${phoneNumber}`;
+  const jobId = `photo_timeout_${phoneNumber}_${Date.now()}`;
 
   try {
-    const existing = await queue.getJob(jobId);
-    if (existing) await existing.remove();
-
     await queue.add(
       'advance_photos',
       {

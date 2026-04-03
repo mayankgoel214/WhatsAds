@@ -93,9 +93,7 @@ export async function postProcessFinal(imageBuffer: Buffer, style?: string): Pro
     .jpeg({ quality: 95, mozjpeg: true })
     .withExifMerge({
       IFD0: {
-        Make: 'Canon',
-        Model: 'Canon EOS R5',
-        Software: 'Adobe Lightroom Classic 13.2',
+        Software: 'Clickkar AI',
       },
     })
     .toBuffer();
@@ -437,8 +435,7 @@ export async function uploadToStorage(buffer: Buffer, filename: string, contentT
       const url = await fal.storage.upload(blob);
       return url;
     } catch {
-      const base64 = buffer.toString('base64');
-      return `data:${contentType};base64,${base64.slice(0, 100)}...`;
+      throw new Error('All storage upload methods failed');
     }
   }
 }
@@ -451,10 +448,14 @@ export async function removeBackground(imageUrl: string): Promise<string> {
   ensureFalConfig();
   const startMs = Date.now();
 
-  const result = (await fal.subscribe(BIREFNET_MODEL as string, {
-    input: { image_url: imageUrl },
-    logs: false,
-  })) as {
+  const result = (await withTimeout(
+    fal.subscribe(BIREFNET_MODEL as string, {
+      input: { image_url: imageUrl },
+      logs: false,
+    }),
+    60_000,
+    'BiRefNet',
+  )) as {
     data: { image?: { url: string }; images?: Array<{ url: string }> };
   };
 
@@ -695,15 +696,19 @@ export async function generateBackgroundOnlyScene(
 
   console.info(JSON.stringify({ event: 'bg_only_start', promptPreview: safePrompt.slice(0, 120) }));
 
-  const result = (await fal.subscribe(FLUX_INPAINT_MODEL as string, {
-    input: {
-      image_url: canvasUrl,
-      mask_url: maskUrl,
-      prompt: safePrompt,
-      safety_tolerance: '2',
-    },
-    logs: false,
-  })) as {
+  const result = (await withTimeout(
+    fal.subscribe(FLUX_INPAINT_MODEL as string, {
+      input: {
+        image_url: canvasUrl,
+        mask_url: maskUrl,
+        prompt: safePrompt,
+        safety_tolerance: '2',
+      },
+      logs: false,
+    }),
+    120_000,
+    'Flux Fill BG',
+  )) as {
     data: { images?: Array<{ url: string }>; image?: { url: string } };
   };
 
@@ -988,15 +993,19 @@ export async function generateReferenceScene(
   try {
     const prompt = `${creativePrompt}. Photorealistic photograph, shot on Canon EOS R5 with 85mm f/1.4 lens. Natural studio lighting. No text, no words, no watermarks, no logos added. Every person must have exactly 5 fingers per hand, natural human proportions, realistic skin texture. Nothing floating in the air. Product must be clearly visible and the focal point.`;
 
-    const result = (await fal.subscribe(SEEDREAM_EDIT_MODEL as string, {
-      input: {
-        prompt,
-        image_urls: [imageUrl],
-        image_size: 'square_hd',
-        num_images: 1,
-      },
-      logs: false,
-    })) as {
+    const result = (await withTimeout(
+      fal.subscribe(SEEDREAM_EDIT_MODEL as string, {
+        input: {
+          prompt,
+          image_urls: [imageUrl],
+          image_size: 'square_hd',
+          num_images: 1,
+        },
+        logs: false,
+      }),
+      120_000,
+      'Seedream',
+    )) as {
       data: { images?: Array<{ url: string }> };
     };
 

@@ -21,6 +21,7 @@ async function main() {
     {
       connection: getRedisConnection().duplicate(),
       concurrency: 3,
+      lockDuration: 300000,
       limiter: { max: 10, duration: 60_000 },
     },
   );

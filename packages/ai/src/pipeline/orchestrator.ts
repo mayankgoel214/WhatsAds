@@ -231,19 +231,9 @@ export async function processProductImage(
       adBuffer = await restoreFaces(adBuffer);
     }
 
-    // IC-Light V2 harmonization: unify lighting across the entire composited image.
-    // Only for creative styles — clean white and studio look better without it.
-    // Re-composite after IC-Light because it may subtly shift the product pixels.
-    if (params.style !== 'style_clean_white' && params.style !== 'style_studio') {
-      try {
-        const lightPrompt = plan.analysis?.recommendedScene?.lighting ?? 'soft professional studio lighting';
-        adBuffer = await harmonizeLighting(adBuffer, lightPrompt);
-        // RE-COMPOSITE again after IC-Light to restore exact product pixels
-        adBuffer = await recompositeProduct(adBuffer, cutoutBuffer);
-      } catch (err) {
-        console.warn(JSON.stringify({ event: 'iclight_failed_continuing', error: err instanceof Error ? err.message : String(err) }));
-      }
-    }
+    // IC-Light V2 disabled — too slow/unreliable (90s timeouts).
+    // Bria + recomposite produces great results without it.
+    // TODO: Re-enable with shorter timeout or as async post-delivery enhancement
 
     adBuffer = await upscaleDownscale(adBuffer);
     adBuffer = await postProcessFinal(adBuffer, params.style);

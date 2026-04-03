@@ -101,7 +101,7 @@ export async function razorpayWebhookRoutes(app: FastifyInstance): Promise<void>
         phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
       });
 
-      await onPaymentConfirmed(order.phoneNumber, order.id, wa);
+      await onPaymentConfirmed(order.id, event.paymentId, wa);
     } catch (err) {
       app.log.error({ err }, 'Razorpay webhook processing error');
     }

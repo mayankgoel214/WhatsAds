@@ -15,6 +15,11 @@ import { registerBullBoard } from './plugins/bull-board.js';
 async function main() {
   const config = getConfig();
 
+  if (config.NODE_ENV === 'production' && process.env.PAYMENT_BYPASS === 'true') {
+    console.error('FATAL: PAYMENT_BYPASS must not be set in production');
+    process.exit(1);
+  }
+
   const app = Fastify({
     logger: {
       level: config.LOG_LEVEL,

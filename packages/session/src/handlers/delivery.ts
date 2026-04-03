@@ -87,6 +87,34 @@ export async function handleDelivered(
         case ButtonIds.FEEDBACK_REDO:
           await handleStartOver(session, user, wa, lang);
           return;
+
+        case 'reuse_photo':
+          // Keep existing photos, pick a new style
+          await transitionTo(session.phoneNumber, 'SETUP_STYLE', {
+            currentOrderId: null,
+            styleSelection: null,
+            voiceInstructions: null,
+          });
+          {
+            const { sendStyleList } = await import('./onboarding.js');
+            await sendStyleList(session.phoneNumber, lang, wa, user.businessType ?? undefined);
+          }
+          return;
+
+        case 'new_photo':
+          // Clear images and start fresh
+          await transitionTo(session.phoneNumber, 'AWAITING_PHOTO', {
+            imageMediaIds: [],
+            imageStorageUrls: [],
+            currentOrderId: null,
+            styleSelection: null,
+            voiceInstructions: null,
+          });
+          await wa.sendText(
+            session.phoneNumber,
+            lang === 'hi' ? 'Nayi photo bhejiye!' : 'Send your new photo!',
+          );
+          return;
       }
     }
 

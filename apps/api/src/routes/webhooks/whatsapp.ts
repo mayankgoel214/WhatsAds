@@ -26,6 +26,23 @@ function getFreshAccessToken(): string {
   return getConfig().WHATSAPP_ACCESS_TOKEN;
 }
 
+// ---------------------------------------------------------------------------
+// Simple in-memory rate limiter: max 60 requests/minute per IP
+// ---------------------------------------------------------------------------
+
+const RATE_LIMIT_MAX = 60;
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const rateLimitMap = new Map<string, number[]>();
+
+function isRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const cutoff = now - RATE_LIMIT_WINDOW_MS;
+  const timestamps = (rateLimitMap.get(ip) ?? []).filter(t => t > cutoff);
+  timestamps.push(now);
+  rateLimitMap.set(ip, timestamps);
+  return timestamps.length > RATE_LIMIT_MAX;
+}
+
 export async function whatsappWebhookRoutes(app: FastifyInstance): Promise<void> {
   const config = getConfig();
 
@@ -52,6 +69,13 @@ export async function whatsappWebhookRoutes(app: FastifyInstance): Promise<void>
   // -------------------------------------------------------------------------
 
   app.post('/webhooks/whatsapp', async (req: FastifyRequest, reply: FastifyReply) => {
+    // Rate limiting: 60 req/min per IP
+    const ip = req.ip ?? 'unknown';
+    if (isRateLimited(ip)) {
+      app.log.warn({ ip }, 'WhatsApp webhook rate limit exceeded');
+      return reply.code(429).send({ error: 'Too many requests', code: 'RATE_LIMITED' });
+    }
+
     // Always return 200 immediately — Meta requires response within 20s
     // Process asynchronously after responding
     reply.code(200).send('OK');
@@ -66,10 +90,17 @@ export async function whatsappWebhookRoutes(app: FastifyInstance): Promise<void>
         return;
       }
 
-      if (config.WHATSAPP_APP_SECRET !== 'placeholder' &&
-          !verifyWebhookSignature(rawBody, signature, config.WHATSAPP_APP_SECRET)) {
-        app.log.warn('Invalid WhatsApp webhook signature');
-        return;
+      if (config.NODE_ENV === 'production') {
+        if (!verifyWebhookSignature(rawBody, signature, config.WHATSAPP_APP_SECRET)) {
+          app.log.warn('Invalid WhatsApp webhook signature — rejecting request');
+          return;
+        }
+      } else {
+        if (config.WHATSAPP_APP_SECRET === 'placeholder') {
+          app.log.warn('WHATSAPP_APP_SECRET is placeholder — skipping signature verification in dev');
+        } else if (!verifyWebhookSignature(rawBody, signature, config.WHATSAPP_APP_SECRET)) {
+          app.log.warn('Invalid WhatsApp webhook signature (dev mode — continuing anyway)');
+        }
       }
 
       const body = req.body as WhatsAppWebhookBody;

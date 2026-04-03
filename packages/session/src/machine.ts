@@ -11,7 +11,7 @@
 
 import type { WhatsAppClient } from '@whatsads/whatsapp';
 import { prisma } from '@whatsads/db';
-import { getSession, getOrCreateUser, transitionTo } from './db-helpers.js';
+import { getSession, getOrCreateUser, transitionTo, checkAndMarkProcessed } from './db-helpers.js';
 import type { MessageContext } from './types.js';
 import { logger } from './logger.js';
 
@@ -41,19 +41,12 @@ export async function handleIncomingMessage(
   message: MessageContext,
   wa: WhatsAppClient,
 ): Promise<void> {
-  // 1. Idempotency check
-  const existing = await prisma.processedMessage.findUnique({
-    where: { messageId: message.messageId },
-  });
-  if (existing) {
+  // 1. Idempotency check — atomic create; catches P2002 unique constraint violation
+  const isDuplicate = await checkAndMarkProcessed(message.messageId);
+  if (isDuplicate) {
     logger.debug('Duplicate message, skipping', { messageId: message.messageId });
     return;
   }
-
-  // 2. Mark as processed
-  await prisma.processedMessage.create({
-    data: { messageId: message.messageId },
-  });
 
   // 3. Get or create user
   const user = await getOrCreateUser(phoneNumber);
@@ -114,12 +107,12 @@ export async function handleIncomingMessage(
         break;
 
       case 'PROCESSING': {
-        // Auto-recovery: if stuck for >5 minutes, reset to IDLE
+        // Auto-recovery: if stuck for >10 minutes, reset to IDLE
         const stuckMinutes = session.stateEnteredAt
           ? (Date.now() - new Date(session.stateEnteredAt).getTime()) / 60_000
           : 0;
 
-        if (stuckMinutes > 5) {
+        if (stuckMinutes > 10) {
           await prisma.session.update({
             where: { id: session.id },
             data: { state: 'IDLE', stateEnteredAt: new Date() },
@@ -142,9 +135,24 @@ export async function handleIncomingMessage(
         await handleDelivered(session, user, message, wa);
         break;
 
-      case 'EDIT_PROCESSING':
-        await handleEditProcessing(session, user, message, wa);
+      case 'EDIT_PROCESSING': {
+        // Auto-recovery: if stuck for >5 minutes, reset to DELIVERED and notify user
+        const editStuckMinutes = session.stateEnteredAt
+          ? (Date.now() - new Date(session.stateEnteredAt).getTime()) / 60_000
+          : 0;
+
+        if (editStuckMinutes > 5) {
+          await prisma.session.update({
+            where: { id: session.id },
+            data: { state: 'DELIVERED', stateEnteredAt: new Date() },
+          });
+          const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
+          await wa.sendText(phoneNumber, msgProcessingStuck(lang));
+        } else {
+          await handleEditProcessing(session, user, message, wa);
+        }
         break;
+      }
 
       default:
         logger.warn('Unknown session state', { state: session.state, phoneNumber });

@@ -71,7 +71,7 @@ export async function processPaymentCheck(job: Job): Promise<void> {
         phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
       });
 
-      await onPaymentConfirmed(data.phoneNumber, order.id, wa);
+      await onPaymentConfirmed(order.id, status.paymentId, wa);
     }
     return;
   }

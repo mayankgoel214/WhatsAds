@@ -204,7 +204,7 @@ async function sendPaymentLink(
   }
 
   // DEV MODE: skip payment and auto-confirm
-  if (process.env.NODE_ENV !== 'production') {
+  if (process.env.PAYMENT_BYPASS === 'true') {
     logger.info('DEV MODE: Skipping payment, auto-confirming order', { phoneNumber, orderId: order.id });
     await wa.sendText(
       phoneNumber,

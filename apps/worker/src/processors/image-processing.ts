@@ -34,7 +34,6 @@ export async function processImageJob(job: Job): Promise<void> {
   const log = (msg: string, extra?: Record<string, unknown>) => {
     const line = JSON.stringify({ job: job.id, orderId: data.orderId, msg, ...extra });
     console.log(line);
-    process.stdout.write(line + '\n');
   };
 
   log('=== STARTING IMAGE PROCESSING ===', { style: data.style, imageUrl: data.inputImageUrl.slice(0, 80) });
@@ -137,15 +136,16 @@ export async function processImageJob(job: Job): Promise<void> {
           .filter((j: ImageJob) => j.status === 'completed' && j.outputImageUrl)
           .map((j: ImageJob) => j.outputImageUrl!);
 
-        // Update order status
-        await prisma.order.update({
-          where: { id: data.orderId },
+        // Optimistic lock: only proceed if this worker is the one that completes the order
+        const updated = await prisma.order.updateMany({
+          where: { id: data.orderId, status: 'processing' },
           data: {
             status: 'completed',
             outputImageUrls: completedUrls,
             processingCompletedAt: new Date(),
           },
         });
+        if (updated.count === 0) return; // Another worker already completed this order
 
         // Send results via WhatsApp
         const user = await prisma.user.findUnique({
