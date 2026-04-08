@@ -248,9 +248,9 @@ export function styleDisplayName(styleId: string, lang: Lang): string {
   const names: Record<string, { hi: string; en: string }> = {
     style_clean_white: { hi: 'Saaf Safed Background', en: 'Clean White Background' },
     style_lifestyle: { hi: 'Lifestyle Setting', en: 'Lifestyle Setting' },
-    style_gradient: { hi: 'Gradient Background', en: 'Gradient Background' },
+    style_gradient: { hi: 'Dark Luxury', en: 'Dark Luxury' },
     style_outdoor: { hi: 'Outdoor Scene', en: 'Outdoor Scene' },
-    style_studio: { hi: 'Studio Look', en: 'Studio Look' },
+    style_studio: { hi: 'Colored Studio', en: 'Colored Studio' },
     style_festive: { hi: 'Tyohar Style', en: 'Festive Style' },
     style_minimal: { hi: 'Minimal Saaf', en: 'Minimal & Clean' },
     style_with_model: { hi: 'Model Ke Saath', en: 'With Model' },

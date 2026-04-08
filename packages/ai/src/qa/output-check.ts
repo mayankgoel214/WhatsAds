@@ -25,7 +25,14 @@ export type OutputAssessment = z.infer<typeof OutputAssessmentSchema>;
 const ComparativeAssessmentSchema = z.object({
   score: z.number().min(0).max(100),
   pass: z.boolean(),
-  productFidelity: z.enum(['identical', 'minor_shift', 'altered', 'regenerated']),
+  productFidelity: z.string().transform((v) => {
+    const valid = ['identical', 'minor_shift', 'altered', 'regenerated'] as const;
+    if ((valid as readonly string[]).includes(v)) return v as typeof valid[number];
+    if (v.includes('regenerat')) return 'regenerated' as const;
+    if (v.includes('alter') || v.includes('significant')) return 'altered' as const;
+    if (v.includes('minor') || v.includes('shift')) return 'minor_shift' as const;
+    return 'altered' as const;
+  }),
   productFidelityScore: z.number().min(0).max(35),
   productVisible: z.boolean(),
   backgroundQuality: z.enum(['poor', 'acceptable', 'good', 'excellent']),

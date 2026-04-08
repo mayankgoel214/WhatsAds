@@ -76,10 +76,11 @@ export async function createOrderAndSendPayment(params: CreateOrderParams): Prom
   );
 
   if (isFreeOrder) {
-    // Free order — skip payment, go straight to processing
+    // Free order — skip payment, set to processing BEFORE enqueuing
+    // (worker checks status: 'processing' for delivery — must be set first)
     await prisma.order.update({
       where: { id: order.id },
-      data: { status: 'payment_confirmed' },
+      data: { status: 'processing', processingStartedAt: new Date() },
     });
 
     await transitionTo(phoneNumber, 'PROCESSING', {
@@ -89,7 +90,7 @@ export async function createOrderAndSendPayment(params: CreateOrderParams): Prom
 
     await wa.sendText(phoneNumber, msgProcessingStarted(lang));
 
-    // Enqueue image jobs
+    // Enqueue image jobs (order already in 'processing' state)
     await enqueueImageJobs(order.id, phoneNumber, imageStorageUrls, styleId, voiceInstructions, user.businessType ?? undefined);
   } else {
     // Paid order — create payment link

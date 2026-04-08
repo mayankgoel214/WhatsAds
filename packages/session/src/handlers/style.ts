@@ -7,6 +7,8 @@
 
 import type { WhatsAppClient } from '@whatsads/whatsapp';
 import type { Session, User } from '@whatsads/db';
+import { prisma } from '@whatsads/db';
+import { getImageQueue } from '@whatsads/queue';
 import { transitionTo } from '../db-helpers.js';
 import { styleDisplayName } from '../messages.js';
 import { ListIds, ButtonIds } from '../types.js';
@@ -56,6 +58,64 @@ export async function handleSetupStyle(
 
   const styleName = styleDisplayName(styleId, lang);
 
+  // Check if this is a style-change edit (currentOrderId preserved from edit.ts)
+  if (session.currentOrderId) {
+    const order = await prisma.order.findUnique({ where: { id: session.currentOrderId } });
+    if (order && order.inputImageUrls.length > 0) {
+      // Style-change edit: reuse existing photos, enqueue reprocessing immediately
+      await wa.sendText(
+        phoneNumber,
+        lang === 'hi'
+          ? `*${styleName}* style mein bana rahe hain — bas thoda wait karein!`
+          : `Reprocessing in *${styleName}* style — just a moment!`,
+      );
+
+      // Increment revision count and reset order status
+      await prisma.order.update({
+        where: { id: order.id },
+        data: {
+          style: styleId,
+          revisionsUsed: { increment: 1 },
+          status: 'processing',
+          processingStartedAt: new Date(),
+          processingCompletedAt: null,
+        },
+      });
+
+      // Create ImageJob record for the style change
+      const editJobId = crypto.randomUUID();
+      await prisma.imageJob.create({
+        data: {
+          id: editJobId,
+          orderId: order.id,
+          inputImageUrl: order.cutoutUrls[0] || order.inputImageUrls[0] || '',
+          style: styleId,
+          status: 'queued',
+        },
+      });
+
+      // Enqueue re-processing job
+      const queue = getImageQueue();
+      await queue.add('process_image', {
+        orderId: order.id,
+        imageJobId: editJobId,
+        phoneNumber: phoneNumber,
+        inputImageUrl: order.cutoutUrls[0] || order.inputImageUrls[0] || '',
+        style: styleId,
+        productCategory: order.productCategory ?? undefined,
+        pipeline: order.cutoutUrls.length > 0 ? 'fallback' : 'primary',
+      });
+
+      await transitionTo(phoneNumber, 'EDIT_PROCESSING', {
+        styleSelection: styleId,
+      });
+
+      logger.info('Style-change edit: reprocessing with new style', { phoneNumber, styleId, orderId: order.id });
+      return;
+    }
+  }
+
+  // Normal flow: new order, ask for photo
   await transitionTo(phoneNumber, 'AWAITING_PHOTO', {
     styleSelection: styleId,
     imageMediaIds: [],

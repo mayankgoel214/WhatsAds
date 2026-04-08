@@ -34,8 +34,9 @@ export async function sendProcessedImages(
   language: 'hi' | 'en',
   userName: string | undefined,
   wa: WhatsAppClient,
+  videoUrls?: string[],
 ): Promise<void> {
-  logger.info('Delivering processed images', { phoneNumber, count: outputImageUrls.length });
+  logger.info('Delivering processed images', { phoneNumber, count: outputImageUrls.length, videoCount: videoUrls?.length ?? 0 });
 
   for (let i = 0; i < outputImageUrls.length; i++) {
     const url = outputImageUrls[i]!;
@@ -49,6 +50,17 @@ export async function sendProcessedImages(
     // 5-second gap between batch images for a "wow" moment
     if (i < outputImageUrls.length - 1) {
       await sleep(5000);
+    }
+  }
+
+  // Send video ads (Ken Burns) after images
+  if (videoUrls && videoUrls.length > 0) {
+    await sleep(2000);
+    for (const vUrl of videoUrls) {
+      const videoCaption = language === 'hi'
+        ? 'Bonus: Aapka product video ad!'
+        : 'Bonus: Your product video ad!';
+      await wa.sendVideo(phoneNumber, vUrl, videoCaption);
     }
   }
 
@@ -89,9 +101,8 @@ export async function handleDelivered(
           return;
 
         case 'reuse_photo':
-          // Keep existing photos, pick a new style
+          // Keep existing photos + orderId — style.ts will auto-reprocess
           await transitionTo(session.phoneNumber, 'SETUP_STYLE', {
-            currentOrderId: null,
             styleSelection: null,
             voiceInstructions: null,
           });
@@ -102,18 +113,18 @@ export async function handleDelivered(
           return;
 
         case 'new_photo':
-          // Clear images and start fresh
-          await transitionTo(session.phoneNumber, 'AWAITING_PHOTO', {
+          // Clear images and re-ask for style
+          await transitionTo(session.phoneNumber, 'SETUP_STYLE', {
             imageMediaIds: [],
             imageStorageUrls: [],
             currentOrderId: null,
             styleSelection: null,
             voiceInstructions: null,
           });
-          await wa.sendText(
-            session.phoneNumber,
-            lang === 'hi' ? 'Nayi photo bhejiye!' : 'Send your new photo!',
-          );
+          {
+            const { sendStyleList } = await import('./onboarding.js');
+            await sendStyleList(session.phoneNumber, lang, wa, user.businessType ?? undefined);
+          }
           return;
       }
     }
@@ -125,8 +136,26 @@ export async function handleDelivered(
     }
   }
 
-  // Text or voice note in DELIVERED → treat as edit instruction
+  // Text or voice note in DELIVERED → check if it's a real edit instruction or just a greeting
   if (message.messageType === 'text' || message.messageType === 'audio') {
+    if (message.messageType === 'text' && message.text) {
+      const text = message.text.trim();
+      logger.info('DELIVERED text received', { text, length: text.length, phoneNumber: session.phoneNumber });
+
+      // Short messages without edit keywords → resend feedback buttons
+      const hasEditIntent = /background|color|colour|bright|dark|light|zoom|crop|style|change|badlo|roshni|bada|chhota|hatao|lagao|remove|add|make|put|move|resize/i.test(text);
+
+      if (text.length <= 30 && !hasEditIntent) {
+        logger.info('Non-edit short text in DELIVERED, resending buttons', { text });
+        await wa.sendButtons(session.phoneNumber, msgAskFeedback(lang), [
+          { id: ButtonIds.FEEDBACK_GREAT, title: lang === 'hi' ? 'Bahut badiya!' : 'Love it!' },
+          { id: ButtonIds.FEEDBACK_CHANGE, title: lang === 'hi' ? 'Kuch badlao' : 'Make a change' },
+          { id: ButtonIds.FEEDBACK_REDO, title: lang === 'hi' ? 'Alag karo' : 'Start over' },
+        ]);
+        return;
+      }
+    }
+
     await handleAwaitingEdit(session, user, message, wa);
     return;
   }

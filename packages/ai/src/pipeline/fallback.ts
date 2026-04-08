@@ -28,18 +28,20 @@ interface StylePostConfig {
   blackLift: number;   // Lifted blacks value (0 = pure black, 15 = lifted)
 }
 
+// Post-processing should be SUBTLE — Bria/Seedream output is already good.
+// Heavy filters make the image look fake and over-processed.
 const STYLE_POST_CONFIG: Record<string, StylePostConfig> = {
-  style_clean_white: { grain: 0, vignette: 0, warmthShift: 0, satBoost: 1.0, contrast: 0.98, blackLift: 5 },
-  style_studio:      { grain: 0, vignette: 0, warmthShift: 0, satBoost: 1.0, contrast: 0.98, blackLift: 5 },
-  style_gradient:    { grain: 6, vignette: 0.35, warmthShift: -3, satBoost: 1.08, contrast: 0.92, blackLift: 8 },
-  style_lifestyle:   { grain: 3, vignette: 0.2, warmthShift: 8, satBoost: 1.06, contrast: 0.95, blackLift: 12 },
-  style_festive:     { grain: 3, vignette: 0.25, warmthShift: 10, satBoost: 1.15, contrast: 0.94, blackLift: 10 },
-  style_outdoor:     { grain: 5, vignette: 0.25, warmthShift: 3, satBoost: 1.08, contrast: 0.93, blackLift: 10 },
-  style_minimal:     { grain: 2, vignette: 0, warmthShift: 0, satBoost: 1.0, contrast: 0.97, blackLift: 8 },
-  style_with_model:  { grain: 3, vignette: 0.2, warmthShift: 4, satBoost: 1.04, contrast: 0.95, blackLift: 12 },
+  style_clean_white: { grain: 1, vignette: 0.04, warmthShift: 0, satBoost: 1.0, contrast: 0.99, blackLift: 2 },
+  style_studio:      { grain: 1, vignette: 0.04, warmthShift: 0, satBoost: 1.0, contrast: 0.99, blackLift: 2 },
+  style_gradient:    { grain: 4, vignette: 0.14, warmthShift: -1, satBoost: 1.03, contrast: 0.97, blackLift: 3 },
+  style_lifestyle:   { grain: 3, vignette: 0.10, warmthShift: 2, satBoost: 1.02, contrast: 0.98, blackLift: 3 },
+  style_festive:     { grain: 3, vignette: 0.12, warmthShift: 3, satBoost: 1.04, contrast: 0.97, blackLift: 3 },
+  style_outdoor:     { grain: 4, vignette: 0.12, warmthShift: 1, satBoost: 1.03, contrast: 0.97, blackLift: 3 },
+  style_minimal:     { grain: 1, vignette: 0.04, warmthShift: 0, satBoost: 1.0, contrast: 0.99, blackLift: 2 },
+  style_with_model:  { grain: 3, vignette: 0.10, warmthShift: 1, satBoost: 1.02, contrast: 0.98, blackLift: 3 },
 };
 
-const DEFAULT_POST_CONFIG: StylePostConfig = { grain: 4, vignette: 0.25, warmthShift: 2, satBoost: 1.05, contrast: 0.95, blackLift: 12 };
+const DEFAULT_POST_CONFIG: StylePostConfig = { grain: 1, vignette: 0.08, warmthShift: 1, satBoost: 1.02, contrast: 0.98, blackLift: 3 };
 
 /**
  * Full post-processing pipeline that transforms AI output into
@@ -56,27 +58,26 @@ export async function postProcessFinal(imageBuffer: Buffer, style?: string): Pro
 
   let result = imageBuffer;
 
-  // 1. Micro-contrast (HIRALOAM) — makes product "pop"
+  // 1. Subtle micro-contrast — very light touch, Bria output is already sharp
   result = await sharp(result)
-    .sharpen({ sigma: 8, m1: 0.3, m2: 0.2 })
+    .sharpen({ sigma: 3, m1: 0.1, m2: 0.08 })
     .toBuffer();
 
-  // 2. Style-aware color grade
-  const warmR = 1.02 + (config.warmthShift > 0 ? config.warmthShift * 0.002 : 0);
-  const warmB = 1.01 + (config.warmthShift < 0 ? Math.abs(config.warmthShift) * 0.002 : -config.warmthShift * 0.001);
+  // 2. Subtle color grade — minimal adjustments, let the AI output speak
+  const warmR = 1.0 + (config.warmthShift > 0 ? config.warmthShift * 0.001 : 0);
+  const warmB = 1.0 + (config.warmthShift < 0 ? Math.abs(config.warmthShift) * 0.001 : -config.warmthShift * 0.0005);
   result = await sharp(result)
     .recomb([
-      [warmR, 0.02, -0.01],
-      [-0.01, 1.03, 0.0],
-      [0.0, -0.01, warmB],
+      [warmR, 0, 0],
+      [0, 1.0, 0],
+      [0, 0, warmB],
     ])
     .linear(config.contrast, config.blackLift)
-    .modulate({ brightness: 1.01, saturation: config.satBoost })
+    .modulate({ brightness: 1.0, saturation: config.satBoost })
     .toBuffer();
 
-  // 3. Chromatic aberration — DISABLED: extractChannel+joinChannel strips color
-  // TODO: fix using raw pixel buffer manipulation instead of sharp channel ops
-  // result = await addChromaticAberration(result);
+  // 3. Chromatic aberration — subtle color fringing at edges (real lens effect)
+  result = await addChromaticAberration(result);
 
   // 4. Vignette (if style uses it)
   if (config.vignette > 0) {
@@ -88,12 +89,14 @@ export async function postProcessFinal(imageBuffer: Buffer, style?: string): Pro
     result = await addFilmGrain(result, config.grain);
   }
 
-  // 6. Final JPEG encode with EXIF metadata (simulates real camera)
+  // 6. Final JPEG encode with realistic EXIF metadata
   result = await sharp(result)
     .jpeg({ quality: 95, mozjpeg: true })
     .withExifMerge({
       IFD0: {
-        Software: 'Clickkar AI',
+        Make: 'Canon',
+        Model: 'Canon EOS R5',
+        Software: 'Adobe Photoshop Lightroom Classic 14.1',
       },
     })
     .toBuffer();
@@ -108,30 +111,47 @@ export async function postProcessFinal(imageBuffer: Buffer, style?: string): Pro
  * The effect is tiny (1px) but the brain detects its absence in AI images.
  */
 async function addChromaticAberration(imageBuffer: Buffer): Promise<Buffer> {
-  const meta = await sharp(imageBuffer).metadata();
-  const w = meta.width ?? 1024;
-  const h = meta.height ?? 1024;
+  const { data, info } = await sharp(imageBuffer)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
 
-  // Extract RGB channels
-  const redBuf = await sharp(imageBuffer).extractChannel(0).toBuffer();
-  const greenBuf = await sharp(imageBuffer).extractChannel(1).toBuffer();
-  const blueBuf = await sharp(imageBuffer).extractChannel(2).toBuffer();
+  const w = info.width;
+  const h = info.height;
+  const ch = info.channels; // 4 (RGBA)
+  const pixels = new Uint8Array(data);
+  const output = new Uint8Array(pixels.length);
 
-  // Scale red channel slightly larger (outward shift), blue slightly smaller (inward)
-  const redShifted = await sharp(redBuf)
-    .resize(w + 2, h + 2, { kernel: 'lanczos3' })
-    .extract({ left: 1, top: 1, width: w, height: h })
-    .toBuffer();
+  const cx = w / 2;
+  const cy = h / 2;
+  const shift = 0.7; // subtle — 0.7px shift
 
-  const blueShifted = await sharp(blueBuf)
-    .resize(w - 2, h - 2, { kernel: 'lanczos3' })
-    .extend({ top: 1, bottom: 1, left: 1, right: 1, background: { r: 0, g: 0, b: 0 } })
-    .resize(w, h, { kernel: 'lanczos3' })
-    .toBuffer();
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = (y * w + x) * ch;
+      const dx = (x - cx) / cx; // -1 to 1
+      const dy = (y - cy) / cy;
 
-  // Recombine channels
-  return sharp(redShifted)
-    .joinChannel([greenBuf, blueShifted])
+      // Red: shift outward from center
+      const rx = Math.round(Math.max(0, Math.min(w - 1, x - dx * shift)));
+      const ry = Math.round(Math.max(0, Math.min(h - 1, y - dy * shift)));
+      const rIdx = (ry * w + rx) * ch;
+
+      // Blue: shift inward toward center
+      const bx = Math.round(Math.max(0, Math.min(w - 1, x + dx * shift)));
+      const by = Math.round(Math.max(0, Math.min(h - 1, y + dy * shift)));
+      const bIdx = (by * w + bx) * ch;
+
+      output[idx] = pixels[rIdx]!;       // Red from shifted position
+      output[idx + 1] = pixels[idx + 1]!; // Green stays
+      output[idx + 2] = pixels[bIdx + 2]!; // Blue from shifted position
+      output[idx + 3] = pixels[idx + 3]!;  // Alpha stays
+    }
+  }
+
+  return sharp(Buffer.from(output), { raw: { width: w, height: h, channels: ch } })
+    .removeAlpha()
+    .jpeg({ quality: 95 })
     .toBuffer();
 }
 
@@ -233,6 +253,65 @@ export async function refineWithKontext(
       durationMs: Date.now() - startMs,
     }));
     return imageBuffer; // Non-fatal — return original
+  }
+}
+
+/**
+ * Fix product branding in a Seedream/Track B output by using Kontext
+ * with the original product image as reference.
+ *
+ * Seedream regenerates the product, destroying brand text/logos.
+ * This function asks Kontext to correct the product text/logos to match
+ * the original product photo — preserving the creative scene + person.
+ *
+ * $0.04/image. Non-fatal — returns original if it fails.
+ */
+export async function fixProductBranding(
+  sceneBuffer: Buffer,
+  originalProductBuffer: Buffer,
+  brandElements: string[],
+): Promise<Buffer> {
+  ensureFalConfig();
+  const startMs = Date.now();
+
+  try {
+    const sceneUrl = await uploadToStorage(sceneBuffer, `branding_fix_scene_${Date.now()}.jpg`);
+    const productUrl = await uploadToStorage(originalProductBuffer, `branding_fix_ref_${Date.now()}.jpg`);
+
+    const brandList = brandElements.slice(0, 5).join(', ');
+    const prompt = `Fix the product in this advertisement image. The product's brand text and logos are incorrect/garbled. Looking at the reference product photo, correct ALL text on the product to exactly match: ${brandList}. Keep the person, scene, and composition exactly the same. Only fix the product's text, logos, and packaging details to match the reference.`;
+
+    const result = (await withTimeout(
+      fal.subscribe('fal-ai/flux-pro/kontext' as string, {
+        input: {
+          prompt,
+          image_url: sceneUrl,
+          // Kontext supports reference images for guided editing
+        },
+        logs: false,
+      }),
+      120_000,
+      'Kontext branding fix',
+    )) as {
+      data: { images?: Array<{ url: string }>; image?: { url: string } };
+    };
+
+    const outputUrl = result.data?.images?.[0]?.url ?? result.data?.image?.url ?? null;
+    if (!outputUrl) {
+      console.warn(JSON.stringify({ event: 'branding_fix_no_output' }));
+      return sceneBuffer;
+    }
+
+    const fixed = await downloadBuffer(outputUrl);
+    console.info(JSON.stringify({ event: 'branding_fix_complete', durationMs: Date.now() - startMs }));
+    return fixed;
+  } catch (err) {
+    console.warn(JSON.stringify({
+      event: 'branding_fix_failed',
+      error: err instanceof Error ? err.message : String(err),
+      durationMs: Date.now() - startMs,
+    }));
+    return sceneBuffer; // Non-fatal — return original scene
   }
 }
 
@@ -502,7 +581,8 @@ export async function enhanceCutout(cutoutBuffer: Buffer, productCategory: strin
  */
 export async function createStudioShot(
   imageUrl: string,
-  productCategory: string
+  productCategory: string,
+  canvasFill?: number,  // 0.5-0.95, default 0.65
 ): Promise<{ studioBuffer: Buffer; cutoutBuffer: Buffer; cutoutUrl: string }> {
   const startMs = Date.now();
 
@@ -519,8 +599,9 @@ export async function createStudioShot(
   const cutW = cutMeta.width ?? 500;
   const cutH = cutMeta.height ?? 500;
 
-  // Product fills ~65% of canvas
-  const maxDim = Math.round(CANVAS_SIZE * 0.65);
+  // Product fills canvasFill% of canvas (clamped to 0.5–0.95, default 0.65)
+  const fill = Math.min(0.95, Math.max(0.5, canvasFill ?? 0.65));
+  const maxDim = Math.round(CANVAS_SIZE * fill);
   const scale = Math.min(maxDim / cutW, maxDim / cutH);
   const scaledW = Math.round(cutW * scale);
   const scaledH = Math.round(cutH * scale);
@@ -533,30 +614,85 @@ export async function createStudioShot(
   const left = Math.round((CANVAS_SIZE - scaledW) / 2);
   const top = Math.round(CANVAS_SIZE * 0.5 - scaledH / 2);
 
-  // Simple soft shadow — an elliptical gradient beneath the product
-  // Previous approach (alpha-based shadow) broke on dark products like laptops
-  const shadowH = Math.round(scaledH * 0.08);
-  const shadowW = Math.round(scaledW * 0.85);
-  const shadowBuffer = await sharp({
-    create: { width: shadowW, height: shadowH, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 40 } },
-  }).blur(Math.max(shadowH / 2, 3)).png().toBuffer();
+  // Clean composite: product on white background with subtle soft shadow
+  // Shadow: use a large blurred copy of the cutout shifted down as contact shadow
+  let shadowBuffer: Buffer | undefined;
+  try {
+    // Create shadow from the cutout itself — blur it heavily and darken
+    const shadowRaw = await sharp(resizedCutout)
+      .resize(scaledW, scaledH)
+      .flatten({ background: { r: 0, g: 0, b: 0 } }) // make opaque black shape
+      .ensureAlpha(0.12) // very transparent
+      .blur(Math.max(scaledW * 0.05, 5))
+      .png()
+      .toBuffer();
+    shadowBuffer = shadowRaw;
+  } catch {
+    // Shadow failed — skip it, just white bg + product
+  }
 
-  // Composite: white bg → shadow → product
-  const shadowLeft = Math.round((CANVAS_SIZE - shadowW) / 2);
-  const shadowTop = top + scaledH - Math.round(shadowH * 0.3);
+  const composites: { input: Buffer; left: number; top: number; blend: 'over' }[] = [];
+  if (shadowBuffer) {
+    composites.push({
+      input: shadowBuffer,
+      left: left + Math.round(scaledW * 0.05),
+      top: top + Math.round(scaledH * 0.03),
+      blend: 'over' as const,
+    });
+  }
+  composites.push({ input: resizedCutout, left, top, blend: 'over' as const });
 
   const studioBuffer = await sharp({
     create: { width: CANVAS_SIZE, height: CANVAS_SIZE, channels: 3, background: { r: 255, g: 255, b: 255 } },
   })
-    .composite([
-      { input: shadowBuffer, left: shadowLeft, top: shadowTop, blend: 'over' },
-      { input: resizedCutout, left, top, blend: 'over' },
-    ])
+    .composite(composites)
     .jpeg({ quality: 95, mozjpeg: true })
     .toBuffer();
 
   console.info(JSON.stringify({ event: 'studio_shot_complete', durationMs: Date.now() - startMs }));
   return { studioBuffer, cutoutBuffer: resizedCutout, cutoutUrl };
+}
+
+/**
+ * Re-composite an existing cutout buffer at a different canvas fill.
+ * Skips BiRefNet (cutout already exists) — just resize + shadow + white bg.
+ */
+export async function compositeStudioShot(
+  existingCutoutBuffer: Buffer,
+  productCategory: string,
+  canvasFill?: number,
+): Promise<{ studioBuffer: Buffer; cutoutBuffer: Buffer }> {
+  const CANVAS_SIZE = 1024;
+  const fill = Math.min(0.95, Math.max(0.5, canvasFill ?? 0.65));
+
+  const cutMeta = await sharp(existingCutoutBuffer).metadata();
+  const cutW = cutMeta.width ?? 500;
+  const cutH = cutMeta.height ?? 500;
+
+  const maxDim = Math.round(CANVAS_SIZE * fill);
+  const scale = Math.min(maxDim / cutW, maxDim / cutH);
+  const scaledW = Math.round(cutW * scale);
+  const scaledH = Math.round(cutH * scale);
+
+  const resizedCutout = await sharp(existingCutoutBuffer)
+    .resize(scaledW, scaledH, { kernel: 'lanczos3' })
+    .png()
+    .toBuffer();
+
+  const left = Math.round((CANVAS_SIZE - scaledW) / 2);
+  const top = Math.round(CANVAS_SIZE * 0.5 - scaledH / 2);
+
+  // Clean composite: product on white background (no shadow — previous shadow was rendering as black rectangle)
+  const studioBuffer = await sharp({
+    create: { width: CANVAS_SIZE, height: CANVAS_SIZE, channels: 3, background: { r: 255, g: 255, b: 255 } },
+  })
+    .composite([
+      { input: resizedCutout, left, top, blend: 'over' },
+    ])
+    .jpeg({ quality: 95, mozjpeg: true })
+    .toBuffer();
+
+  return { studioBuffer, cutoutBuffer: resizedCutout };
 }
 
 // ===========================================================================

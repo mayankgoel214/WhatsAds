@@ -21,7 +21,7 @@ async function main() {
     {
       connection: getRedisConnection().duplicate(),
       concurrency: 3,
-      lockDuration: 300000,
+      lockDuration: 600000, // 10 min — V2 pipeline with retries can take 7+ min
       limiter: { max: 10, duration: 60_000 },
     },
   );

@@ -2,6 +2,7 @@ import type {
   SendMessageResponse,
   SendTextPayload,
   SendImagePayload,
+  SendVideoPayload,
   SendButtonsPayload,
   SendListPayload,
   SendCtaUrlPayload,
@@ -115,6 +116,21 @@ export class WhatsAppClient {
       to,
       type: "image",
       image: { link: imageUrl, ...(caption ? { caption } : {}) },
+    };
+    return this._send("messages", payload);
+  }
+
+  async sendVideo(
+    to: string,
+    videoUrl: string,
+    caption?: string
+  ): Promise<SendMessageResponse> {
+    const payload: SendVideoPayload = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to,
+      type: "video",
+      video: { link: videoUrl, ...(caption ? { caption } : {}) },
     };
     return this._send("messages", payload);
   }

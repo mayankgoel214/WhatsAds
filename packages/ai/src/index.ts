@@ -22,6 +22,16 @@ export {
   type ProcessImageResult,
 } from './pipeline/orchestrator.js';
 
+// V2 Pipeline — Gemini-first approach
+export {
+  processProductImageV2,
+} from './pipeline/gemini-pipeline.js';
+
+// V3 Pipeline — World-class creative ads (story-first, dynamic elements)
+export {
+  processProductImageV3,
+} from './pipeline/gemini-pipeline-v3.js';
+
 // ---------------------------------------------------------------------------
 // Product Analysis
 // ---------------------------------------------------------------------------
@@ -54,6 +64,16 @@ export {
   combinedQualityCheck,
   type CombinedQAResult,
 } from './qa/combined-qa.js';
+
+export {
+  runDeterministicChecks,
+  type DeterministicResult,
+} from './qa/deterministic-checks.js';
+
+export {
+  runFocusedChecks,
+  type FocusedCheckResult,
+} from './qa/focused-checks.js';
 
 // ---------------------------------------------------------------------------
 // Transcription
@@ -94,3 +114,14 @@ export {
   preprocessImage,
   type ImageMetadata,
 } from './pipeline/preprocess.js';
+
+// ---------------------------------------------------------------------------
+// Video generation
+// ---------------------------------------------------------------------------
+
+export {
+  generateKenBurnsVideo,
+  type KenBurnsEffect,
+  type KenBurnsOptions,
+  type KenBurnsResult,
+} from './video/ken-burns.js';

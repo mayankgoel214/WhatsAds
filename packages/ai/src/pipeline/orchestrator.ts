@@ -1,6 +1,6 @@
 import { preprocessImage } from './preprocess.js';
 import { analyzeAndPlan, type AnalyzeAndPlanResult } from './product-analyzer.js';
-import { createStudioShot, inpaintStudioBackground, generateReferenceScene, postProcessFinal, addAILabel, refineWithKontext, restoreFaces, upscaleDownscale, uploadToStorage, downloadBuffer, recompositeProduct, harmonizeLighting } from './fallback.js';
+import { createStudioShot, inpaintStudioBackground, generateReferenceScene, postProcessFinal, addAILabel, refineWithKontext, fixProductBranding, restoreFaces, upscaleDownscale, uploadToStorage, downloadBuffer, recompositeProduct, harmonizeLighting } from './fallback.js';
 import { runBriaProductShot } from './product-shot.js';
 import { combinedQualityCheck } from '../qa/combined-qa.js';
 import type { ProductAnalysis } from './product-analyzer.js';
@@ -19,6 +19,7 @@ export interface ProcessImageParams {
 
 export interface ProcessImageResult {
   outputUrl: string;
+  videoUrl?: string;
   cutoutUrl?: string;
   studioShotUrl?: string;
   qaScore: number;
@@ -109,6 +110,22 @@ export async function processProductImage(
     };
   }
 
+  // If the product is small/flat, recreate studio shot with larger canvas fill so
+  // inpainting has more product pixels to work with (less hallucination risk).
+  let effectiveStudioBuffer = studioBuffer;
+  let effectiveCutoutBuffer = cutoutBuffer;
+  let effectiveStudioShotUrl = studioShotUrl;
+
+  if (plan.recommendedCanvasFill && plan.recommendedCanvasFill > 0.70) {
+    // Re-composite the existing cutout at a larger size — no need to re-run BiRefNet
+    console.info(JSON.stringify({ event: 'recreating_studio_larger_fill', fill: plan.recommendedCanvasFill }));
+    const { compositeStudioShot } = await import('./fallback.js');
+    const largerResult = await compositeStudioShot(cutoutBuffer, category, plan.recommendedCanvasFill);
+    effectiveStudioBuffer = largerResult.studioBuffer;
+    effectiveCutoutBuffer = largerResult.cutoutBuffer;
+    effectiveStudioShotUrl = await uploadToStorage(effectiveStudioBuffer, `studio_lg_${Date.now()}.jpg`);
+  }
+
   // Use branding confidence to make routing decision — if uncertain, preserve product (Track A)
   const hasBranding = plan.hasBranding || plan.brandingConfidence >= 0.3;
 
@@ -118,9 +135,15 @@ export async function processProductImage(
   const forceTrackB = !hasBranding || isWithModel;
   const useTrackA = hasBranding && !isWithModel;
 
+  // Small flat products (gum packs, sachets, lip balm) → inpainting approach
+  // Bria duplicates these. Inpainting preserves product pixels perfectly.
+  const isSmallFlat = plan.productDimensionality === 'flat_2d'
+    && (plan.productPhysicalSize === 'tiny' || plan.productPhysicalSize === 'small');
+  const useInpainting = isSmallFlat && hasBranding;
+
   console.info(JSON.stringify({
     event: 'pipeline_routed',
-    track: useTrackA ? 'A_branded' : 'B_unbranded',
+    track: useInpainting ? 'S_small_flat' : (useTrackA ? 'A_branded' : 'B_unbranded'),
     productName: plan.analysis.productName,
     hasBranding: plan.hasBranding,
     brandingConfidence: plan.brandingConfidence,
@@ -156,6 +179,9 @@ export async function processProductImage(
       if (lastQaResult.humanAnatomy === 'major_issue' || issueText.includes('finger') || issueText.includes('hand') || issueText.includes('anatomy')) {
         fixes.push('Every hand must show exactly 5 fingers. Natural human proportions only.');
       }
+      if (issueText.includes('duplicat') || issueText.includes('twice') || issueText.includes('two pack')) {
+        fixes.push('Do NOT generate any product in the scene. Only generate the background environment.');
+      }
       if (lastQaResult.productIntegration === 'impossible' || issueText.includes('product') || issueText.includes('visible') || issueText.includes('small')) {
         fixes.push('Product must be large, centered, well-lit, and the dominant subject.');
       }
@@ -180,7 +206,17 @@ export async function processProductImage(
     if (params.style === 'style_clean_white' || params.style === 'style_studio') {
       // ===== CLEAN WHITE / STUDIO: Use studio shot directly — no Flux needed =====
       console.info(JSON.stringify({ event: 'studio_direct', attempt }));
-      adBuffer = studioBuffer;
+      adBuffer = effectiveStudioBuffer;
+    } else if (useInpainting && useTrackA) {
+      // ===== TRACK S: Small/flat branded products — inpaint scene around product =====
+      // Product pixels are MASKED and protected. Flux generates scene around them.
+      try {
+        console.info(JSON.stringify({ event: 'track_s_inpaint_start', attempt }));
+        adBuffer = await inpaintStudioBackground(effectiveStudioBuffer, effectiveCutoutBuffer, currentScenePrompt);
+        console.info(JSON.stringify({ event: 'track_s_inpaint_complete', attempt }));
+      } catch (err) {
+        console.error(JSON.stringify({ event: 'track_s_error', attempt, error: err instanceof Error ? err.message : String(err) }));
+      }
     } else if (useTrackA) {
       // ===== TRACK A: Bria Product Shot + recomposite =====
       // Bria is purpose-built for product photography. We feed it the studio shot
@@ -189,19 +225,19 @@ export async function processProductImage(
       try {
         console.info(JSON.stringify({ event: 'track_a_bria_start', attempt }));
 
-        // Use studio shot URL as input to Bria (clean product on white)
+        // Use studio shot URL as input to Bria (clean product on white).
+        // scenePrompt describes the full ad scene including product context —
+        // Bria is designed for this (it takes a product + scene description).
         const briaResult = await runBriaProductShot({
-          imageUrl: studioShotUrl,
+          imageUrl: effectiveStudioShotUrl,
           sceneDescription: currentScenePrompt,
           placement: 'bottom_center',
         });
 
-        // Download Bria's output
-        const briaBuffer = await downloadBuffer(briaResult.outputUrl);
-
-        // RE-COMPOSITE: paste real product cutout back on top
-        // This guarantees pixel-perfect product preservation
-        adBuffer = await recompositeProduct(briaBuffer, cutoutBuffer);
+        // Download Bria's output — Bria places the product in the scene,
+        // so we DON'T recomposite (that was causing product duplication).
+        // Bria's own product placement preserves branding well enough.
+        adBuffer = await downloadBuffer(briaResult.outputUrl);
 
         console.info(JSON.stringify({ event: 'track_a_complete', attempt }));
       } catch (err) {
@@ -211,7 +247,7 @@ export async function processProductImage(
       // ===== TRACK B: Unbranded / With Model — Seedream full generation =====
       try {
         console.info(JSON.stringify({ event: 'track_b_seedream_start', attempt }));
-        adBuffer = await generateReferenceScene(studioShotUrl, currentScenePrompt);
+        adBuffer = await generateReferenceScene(effectiveStudioShotUrl, currentScenePrompt);
         console.info(JSON.stringify({ event: 'track_b_complete', attempt, hasOutput: !!adBuffer }));
       } catch (err) {
         console.error(JSON.stringify({ event: 'track_b_error', attempt, error: err instanceof Error ? err.message : String(err) }));
@@ -220,10 +256,18 @@ export async function processProductImage(
 
     if (!adBuffer) continue;
 
-    // Refinement pipeline: Kontext → CodeFormer (faces, retry only) → IC-Light → ESRGAN → post-process → label
-    // SKIP Kontext for Track A — it alters the real product cutout we carefully preserved
-    console.info(JSON.stringify({ event: 'refinement_pipeline_start', attempt, skipKontext: useTrackA }));
-    if (!useTrackA) {
+    // Refinement pipeline
+    const skipRefinement = useTrackA || useInpainting;
+    console.info(JSON.stringify({ event: 'refinement_pipeline_start', attempt, skipKontext: skipRefinement }));
+
+    // For branded products on Track B (with_model), fix the destroyed branding
+    // Seedream regenerates the product, garbling brand text. Kontext corrects it.
+    if (!skipRefinement && hasBranding && isWithModel && plan.brandElements.length > 0) {
+      console.info(JSON.stringify({ event: 'branding_fix_start', attempt, brandElements: plan.brandElements }));
+      adBuffer = await fixProductBranding(adBuffer, processedBuffer, plan.brandElements);
+    }
+
+    if (!skipRefinement) {
       adBuffer = await refineWithKontext(adBuffer, isWithModel);
     }
     // CodeFormer is slow (30-90s) — only run on retry when attempt 1 had face issues
@@ -231,18 +275,19 @@ export async function processProductImage(
       adBuffer = await restoreFaces(adBuffer);
     }
 
-    // IC-Light V2 disabled — too slow/unreliable (90s timeouts).
-    // Bria + recomposite produces great results without it.
-    // TODO: Re-enable with shorter timeout or as async post-delivery enhancement
-
-    adBuffer = await upscaleDownscale(adBuffer);
+    // ESRGAN upscale-downscale DISABLED for Track A and Track S — output is already
+    // high quality at 1024x1024. The upscale adds artificial sharpness/texture.
+    // Only use for Track B (Seedream) which benefits from detail enhancement.
+    if (!skipRefinement) {
+      adBuffer = await upscaleDownscale(adBuffer);
+    }
     adBuffer = await postProcessFinal(adBuffer, params.style);
     adBuffer = await addAILabel(adBuffer);
     console.info(JSON.stringify({ event: 'refinement_pipeline_complete', attempt }));
 
-    // QA check
+    // QA check — fidelity matters for Track A and Track S (both preserve real product pixels)
     const qa = await combinedQualityCheck(processedBuffer, adBuffer, {
-      checkFidelity: useTrackA,
+      checkFidelity: useTrackA || useInpainting,
     });
     lastQaResult = qa;
 
@@ -281,14 +326,14 @@ export async function processProductImage(
 
     // Check if it passes
     if (qa.pass && qa.score >= QA_PASS_SCORE &&
-        (!useTrackA || qa.productFidelityScore >= QA_FIDELITY_MIN) &&
+        (!(useTrackA || useInpainting) || qa.productFidelityScore >= QA_FIDELITY_MIN) &&
         qa.humanAnatomy !== 'major_issue' &&
         qa.productIntegration !== 'impossible') {
       // QA passed — return this result
       const outputUrl = await uploadToStorage(adBuffer, `output_${Date.now()}.jpg`);
-      const cutoutUrl = await uploadToStorage(cutoutBuffer, `cutout_${Date.now()}.png`, 'image/png');
+      const cutoutUrl = await uploadToStorage(effectiveCutoutBuffer, `cutout_${Date.now()}.png`, 'image/png');
       return {
-        outputUrl, cutoutUrl, studioShotUrl,
+        outputUrl, cutoutUrl, studioShotUrl: effectiveStudioShotUrl,
         qaScore: qa.score, pipeline: 'composite', attempts: totalAttempts,
         durationMs: Date.now() - totalStart,
         inputAssessment: { usable: true, productCategory: plan.productCategory },
@@ -300,13 +345,13 @@ export async function processProductImage(
   }
 
   // If we have a best attempt that scored reasonably (>= 55), use it rather than falling to generic Bria
-  // But for Track A (branded), also require minimum fidelity — don't send destroyed branding
-  if (bestAdBuffer && bestQaScore >= 55 && (!useTrackA || bestFidelityScore >= QA_FIDELITY_MIN)) {
+  // But for Track A and Track S (branded), also require minimum fidelity — don't send destroyed branding
+  if (bestAdBuffer && bestQaScore >= 55 && (!(useTrackA || useInpainting) || bestFidelityScore >= QA_FIDELITY_MIN)) {
     console.info(JSON.stringify({ event: 'using_best_attempt', score: bestQaScore, fidelity: bestFidelityScore }));
     const outputUrl = await uploadToStorage(bestAdBuffer, `output_${Date.now()}.jpg`);
-    const cutoutUrl = await uploadToStorage(cutoutBuffer, `cutout_${Date.now()}.png`, 'image/png');
+    const cutoutUrl = await uploadToStorage(effectiveCutoutBuffer, `cutout_${Date.now()}.png`, 'image/png');
     return {
-      outputUrl, cutoutUrl, studioShotUrl,
+      outputUrl, cutoutUrl, studioShotUrl: effectiveStudioShotUrl,
       qaScore: bestQaScore, pipeline: 'composite', attempts: totalAttempts,
       durationMs: Date.now() - totalStart,
       inputAssessment: { usable: true, productCategory: plan.productCategory },
@@ -338,7 +383,7 @@ export async function processProductImage(
         num_results: 1,
         fast: true,
         placement_type: 'manual_padding',
-        padding_values: [80, 80, 80, 40],  // [left, right, top, bottom] — tight padding = bigger product
+        padding_values: [80, 80, 80, 80],  // even padding — product centered
         shot_size: [1024, 1024],
       },
       logs: false,
@@ -361,9 +406,9 @@ export async function processProductImage(
 
     if (briaQa.pass && !briaQa.hasFundamentalError) {
       const outputUrl = await uploadToStorage(fallbackBuffer, `output_${Date.now()}.jpg`);
-      const cutoutUrl = await uploadToStorage(cutoutBuffer, `cutout_${Date.now()}.png`, 'image/png');
+      const cutoutUrl = await uploadToStorage(effectiveCutoutBuffer, `cutout_${Date.now()}.png`, 'image/png');
       return {
-        outputUrl, cutoutUrl, studioShotUrl,
+        outputUrl, cutoutUrl, studioShotUrl: effectiveStudioShotUrl,
         qaScore: briaQa.score, pipeline: 'composite', attempts: totalAttempts,
         durationMs: Date.now() - totalStart,
         inputAssessment: { usable: true, productCategory: plan.productCategory },
@@ -378,13 +423,13 @@ export async function processProductImage(
 
   console.info(JSON.stringify({ event: 'ultimate_fallback_studio_shot' }));
   // Apply post-processing + label to studio shot fallback
-  let labeledStudio = await postProcessFinal(studioBuffer, params.style);
+  let labeledStudio = await postProcessFinal(effectiveStudioBuffer, params.style);
   labeledStudio = await addAILabel(labeledStudio);
   const labeledStudioUrl = await uploadToStorage(labeledStudio, `output_${Date.now()}.jpg`);
-  const cutoutUrl = await uploadToStorage(cutoutBuffer, `cutout_${Date.now()}.png`, 'image/png');
+  const cutoutUrl = await uploadToStorage(effectiveCutoutBuffer, `cutout_${Date.now()}.png`, 'image/png');
 
   return {
-    outputUrl: labeledStudioUrl, cutoutUrl, studioShotUrl,
+    outputUrl: labeledStudioUrl, cutoutUrl, studioShotUrl: effectiveStudioShotUrl,
     qaScore: 50, pipeline: 'composite', attempts: totalAttempts,
     durationMs: Date.now() - totalStart,
     inputAssessment: { usable: true, productCategory: plan.productCategory },

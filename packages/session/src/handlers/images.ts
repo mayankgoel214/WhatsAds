@@ -183,8 +183,26 @@ export async function handleAwaitingPhoto(
         return;
       }
       // Store as instructions and advance (cap at 500 chars)
-      await prisma.session.update({ where: { phoneNumber }, data: { voiceInstructions: message.text.trim().slice(0, 500), earlyPhotoMediaId: null } });
-      await wa.sendText(phoneNumber, lang === 'hi' ? 'Samajh gaya! Shuru karte hain.' : 'Got it! Starting now.');
+      const instructionText = message.text.trim().slice(0, 500);
+
+      // Detect if user wants a style different from what they selected
+      const wantsModel = /\b(model|person|someone|wearing|holding|using|hand|girl|boy|man|woman|ladki|ladka|insaan)\b/i.test(instructionText);
+      const currentStyle = session.styleSelection ?? '';
+
+      if (wantsModel && currentStyle !== 'style_with_model') {
+        // Auto-switch to with_model style since user clearly wants a person
+        await prisma.session.update({
+          where: { phoneNumber },
+          data: { voiceInstructions: instructionText, earlyPhotoMediaId: null, styleSelection: 'style_with_model' },
+        });
+        logger.info('Auto-switched to style_with_model based on instructions', { phoneNumber, instructionText });
+      } else {
+        await prisma.session.update({
+          where: { phoneNumber },
+          data: { voiceInstructions: instructionText, earlyPhotoMediaId: null },
+        });
+      }
+
       const freshSession = await prisma.session.findUnique({ where: { phoneNumber } });
       if (freshSession) await advanceToPayment(freshSession, user, wa, lang);
       return;
@@ -232,6 +250,13 @@ export async function onPhotoBatchTimeout(
   if (!user) return;
 
   const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
+
+  // Guard: if user already typed "done" and got the instruction prompt, or
+  // order creation is in progress, skip the timeout action
+  if (session.earlyPhotoMediaId === 'awaiting_instructions' || session.earlyPhotoMediaId === 'order_creating') {
+    return;
+  }
+
   await askForInstructions(session, wa, lang);
 }
 
@@ -244,6 +269,12 @@ async function askForInstructions(
   wa: WhatsAppClient,
   lang: 'hi' | 'en',
 ): Promise<void> {
+  // Re-read session to prevent duplicate sends (idempotency)
+  const fresh = await prisma.session.findUnique({ where: { phoneNumber: session.phoneNumber } });
+  if (fresh?.earlyPhotoMediaId === 'awaiting_instructions') {
+    return;
+  }
+
   // Set flag so next message is treated as instructions
   await prisma.session.update({
     where: { phoneNumber: session.phoneNumber },
@@ -270,18 +301,31 @@ async function advanceToPayment(
 ): Promise<void> {
   if (session.imageStorageUrls.length === 0) return;
 
+  // Guard: if session already left AWAITING_PHOTO, don't create duplicate orders
+  const fresh = await prisma.session.findUnique({ where: { phoneNumber: session.phoneNumber } });
+  if (!fresh || fresh.state !== 'AWAITING_PHOTO') return;
+
+  // Set earlyPhotoMediaId to 'order_creating' to block the 45s photo timeout
+  // from calling askForInstructions() while order creation is in progress.
+  // The timeout guard in onPhotoBatchTimeout checks for 'awaiting_instructions'
+  // but we also need to block it during order creation.
+  await prisma.session.update({
+    where: { phoneNumber: session.phoneNumber },
+    data: { earlyPhotoMediaId: 'order_creating' },
+  });
+
   const styleId = session.styleSelection ?? 'style_clean_white';
 
   await createOrderAndSendPayment({
-    session,
+    session: fresh,
     user,
     lang,
     wa,
-    imageStorageUrls: session.imageStorageUrls,
-    imageMediaIds: session.imageMediaIds,
-    imageCount: session.imageStorageUrls.length,
+    imageStorageUrls: fresh.imageStorageUrls,
+    imageMediaIds: fresh.imageMediaIds,
+    imageCount: fresh.imageStorageUrls.length,
     styleId,
-    voiceInstructions: session.voiceInstructions,
+    voiceInstructions: fresh.voiceInstructions,
   });
 }
 

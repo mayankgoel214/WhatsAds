@@ -10,7 +10,7 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { prisma } from '@whatsads/db';
 import type { ImageJob } from '@whatsads/db';
-import { processProductImage } from '@whatsads/ai';
+import { processProductImage, processProductImageV2, processProductImageV3 } from '@whatsads/ai';
 import { uploadFile, Buckets } from '@whatsads/storage';
 import { WhatsAppClient } from '@whatsads/whatsapp';
 import { sendProcessedImages } from '@whatsads/session';
@@ -45,8 +45,14 @@ export async function processImageJob(job: Job): Promise<void> {
   }).catch(() => {}); // Job record might not exist for edits
 
   try {
-    // Run AI pipeline
-    const result = await processProductImage({
+    // Run AI pipeline (V3 = creative ads, V2 = Gemini-first, V1 = legacy multi-tool)
+    const pipelineVersion = process.env['PIPELINE_VERSION'] ?? 'v2';
+    const pipeline = pipelineVersion === 'v3' ? processProductImageV3
+                   : pipelineVersion === 'v2' ? processProductImageV2
+                   : processProductImage;
+    log(`Using ${pipelineVersion.toUpperCase()} pipeline`);
+
+    const result = await pipeline({
       imageUrl: data.inputImageUrl,
       style: data.style,
       productCategory: data.productCategory,
@@ -95,6 +101,20 @@ export async function processImageJob(job: Job): Promise<void> {
       }
     }
 
+    // Handle video URL (if Ken Burns was generated)
+    let videoUrl: string | undefined;
+    if (result.videoUrl) {
+      if (result.videoUrl.includes('supabase.co')) {
+        videoUrl = result.videoUrl;
+      } else try {
+        const videoPath = `${data.orderId}/${data.imageJobId}-video.mp4`;
+        const videoBuffer = await fetch(result.videoUrl).then((r) => r.arrayBuffer());
+        videoUrl = await uploadFile(Buckets.PROCESSED_IMAGES, videoPath, Buffer.from(videoBuffer), 'video/mp4');
+      } catch {
+        videoUrl = result.videoUrl;
+      }
+    }
+
     // Update job record
     await prisma.imageJob.update({
       where: { id: data.imageJobId },
@@ -136,16 +156,19 @@ export async function processImageJob(job: Job): Promise<void> {
           .filter((j: ImageJob) => j.status === 'completed' && j.outputImageUrl)
           .map((j: ImageJob) => j.outputImageUrl!);
 
-        // Optimistic lock: only proceed if this worker is the one that completes the order
+        // Optimistic lock: complete the order if it hasn't been completed yet
         const updated = await prisma.order.updateMany({
-          where: { id: data.orderId, status: 'processing' },
+          where: { id: data.orderId, status: { in: ['processing', 'payment_confirmed'] } },
           data: {
             status: 'completed',
             outputImageUrls: completedUrls,
             processingCompletedAt: new Date(),
           },
         });
-        if (updated.count === 0) return; // Another worker already completed this order
+        if (updated.count === 0) {
+          log('Order already completed by another worker, skipping delivery');
+          return;
+        }
 
         // Send results via WhatsApp
         const user = await prisma.user.findUnique({
@@ -157,12 +180,19 @@ export async function processImageJob(job: Job): Promise<void> {
           phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
         });
 
+        // Collect video URLs from completed jobs
+        const videoUrls = allJobs
+          .filter((j: ImageJob) => j.status === 'completed')
+          .map(() => videoUrl) // videoUrl from current job — TODO: store per-job videoUrl
+          .filter(Boolean) as string[];
+
         await sendProcessedImages(
           data.phoneNumber,
           completedUrls,
           (user?.language as 'hi' | 'en') || 'hi',
           user?.name ?? undefined,
           wa,
+          videoUrls,
         );
 
         // Transition session PROCESSING → DELIVERED

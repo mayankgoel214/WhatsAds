@@ -12,7 +12,14 @@ const CombinedQASchema = z.object({
   hasSketchesOrDrawings: z.boolean(),
   hasFundamentalError: z.boolean(),
   fundamentalErrorDescription: z.string().nullable(),
-  productFidelity: z.enum(['identical', 'minor_shift', 'altered', 'regenerated']),
+  productFidelity: z.string().transform((v) => {
+    const valid = ['identical', 'minor_shift', 'altered', 'regenerated'] as const;
+    if ((valid as readonly string[]).includes(v)) return v as typeof valid[number];
+    if (v.includes('regenerat')) return 'regenerated' as const;
+    if (v.includes('alter') || v.includes('significant')) return 'altered' as const;
+    if (v.includes('minor') || v.includes('shift')) return 'minor_shift' as const;
+    return 'altered' as const;
+  }),
   productFidelityScore: z.number().min(0).max(35),
   sceneQuality: z.enum(['poor', 'acceptable', 'good', 'excellent']),
   physicallyPlausible: z.boolean(),
@@ -66,7 +73,10 @@ A fundamental error is anything that makes the image UNUSABLE for a customer. If
 ## 4. SCENE QUALITY (0-30 points)
 - Is the scene photorealistic with proper lighting, shadows, reflections?
 - Does the product look like it BELONGS in the scene (not pasted on)?
-- Is the product the dominant central subject?
+- Is the product the VISUAL FOCUS? It can dominate through SIZE (filling 40%+) OR through LIGHTING (brightest/sharpest element) OR through COMPOSITION (strategic placement with intentional negative space). All three are valid — the product just needs to be what your eye goes to first.
+- SURFACE CONSISTENCY: Does the surface material maintain consistent texture, color, and grain? Deduct 5-10 points if surface abruptly changes near product edges.
+- LIGHTING CONSISTENCY: Do shadows all fall in the same direction? Is the product lit from the same source as the scene?
+- DYNAMIC ELEMENTS: If splashes, floating particles, or scattered elements are present, do they look physically plausible and add to the composition? Bonus points for compelling dynamic elements.
 
 ## 5. PHYSICAL PLAUSIBILITY (0-15 points)
 - Product sitting naturally ON a flat surface or held naturally by a person?
@@ -133,8 +143,9 @@ A fundamental error is anything that makes the image UNUSABLE for a customer. If
 
 ## 3. SCENE QUALITY (0-40 points)
 - Photorealistic with proper lighting, shadows, reflections?
-- Product is clearly visible and dominant subject?
-- Professional composition?
+- Product is clearly visible and the VISUAL FOCUS (through size, lighting, sharpness, or strategic placement)?
+- Professional composition with intentional dynamic elements (splashes, particles, scattered ingredients)?
+- Bonus for compelling creative direction — does this look like a scroll-stopping AD, not just a product photo?
 
 ## 4. PHYSICAL PLAUSIBILITY (0-20 points)
 - Product held naturally / sitting on surface naturally?

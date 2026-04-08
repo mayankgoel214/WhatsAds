@@ -46,6 +46,7 @@ const MAX_EDGE_PX = 4000;
  */
 export async function preprocessImage(imageBuffer: Buffer): Promise<{
   buffer: Buffer;
+  enhancedBuffer?: Buffer;
   metadata: ImageMetadata;
 }> {
   const startMs = Date.now();
@@ -72,6 +73,11 @@ export async function preprocessImage(imageBuffer: Buffer): Promise<{
   const originalWidth = rawMeta.width ?? 0;
   const originalHeight = rawMeta.height ?? 0;
 
+  // Step 2B: Reject too-small images (cause hallucinations in generation)
+  if (originalWidth < 200 || originalHeight < 200) {
+    throw new Error(`Image too small (${originalWidth}x${originalHeight}). Minimum 200px on each side for good results.`);
+  }
+
   // Step 3: Resize if any edge exceeds limit
   if (originalWidth > MAX_EDGE_PX || originalHeight > MAX_EDGE_PX) {
     pipeline = pipeline.resize(MAX_EDGE_PX, MAX_EDGE_PX, {
@@ -94,6 +100,31 @@ export async function preprocessImage(imageBuffer: Buffer): Promise<{
     .jpeg({ quality: 92, mozjpeg: true })
     .toBuffer({ resolveWithObject: true });
 
+  // Step 5: Enhance dark/soft images for better Gemini input
+  const stats = await sharp(processedBuffer).stats();
+  const meanBrightness = stats.channels.reduce((sum, ch) => sum + ch.mean, 0) / stats.channels.length;
+
+  let enhancedBuffer = processedBuffer;
+  let enhanced = false;
+
+  if (meanBrightness < 90) {
+    // Dark image — auto-level brightness
+    enhancedBuffer = await sharp(processedBuffer)
+      .normalise() // auto-stretch histogram
+      .jpeg({ quality: 92, mozjpeg: true })
+      .toBuffer();
+    enhanced = true;
+    console.info(JSON.stringify({ event: 'preprocess_enhanced', reason: 'dark_image', meanBrightness: Math.round(meanBrightness) }));
+  } else if (meanBrightness > 220) {
+    // Overexposed — gentle gamma correction
+    enhancedBuffer = await sharp(processedBuffer)
+      .gamma(1.8)
+      .jpeg({ quality: 92, mozjpeg: true })
+      .toBuffer();
+    enhanced = true;
+    console.info(JSON.stringify({ event: 'preprocess_enhanced', reason: 'overexposed', meanBrightness: Math.round(meanBrightness) }));
+  }
+
   const metadata: ImageMetadata = {
     width: info.width,
     height: info.height,
@@ -107,9 +138,11 @@ export async function preprocessImage(imageBuffer: Buffer): Promise<{
       width: metadata.width,
       height: metadata.height,
       sizeBytes: metadata.sizeBytes,
+      meanBrightness: Math.round(meanBrightness),
+      enhanced,
       durationMs: Date.now() - startMs,
     })
   );
 
-  return { buffer: processedBuffer, metadata };
+  return { buffer: processedBuffer, enhancedBuffer, metadata };
 }

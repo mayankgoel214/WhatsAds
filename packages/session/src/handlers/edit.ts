@@ -73,9 +73,20 @@ export async function handleAwaitingEdit(
 
     switch (replyId) {
       case 'edit_background':
-      case 'edit_style':
         editStyle = 'change_background';
         break;
+
+      case 'edit_style':
+        // Show style selection — keep currentOrderId so style.ts knows to reprocess
+        await transitionTo(session.phoneNumber, 'SETUP_STYLE', {
+          // Keep currentOrderId — signals style.ts this is a style-change edit
+          voiceInstructions: null,
+        });
+        {
+          const { sendStyleList } = await import('./onboarding.js');
+          await sendStyleList(session.phoneNumber, lang, wa, user.businessType ?? undefined);
+        }
+        return;
 
       case 'edit_lighting':
         editInstructions = 'Make it brighter with better lighting';
@@ -141,10 +152,16 @@ export async function handleAwaitingEdit(
   if (editStyle || editInstructions) {
     await wa.sendText(session.phoneNumber, msgEditProcessing(lang));
 
-    // Increment revision count
+    // Increment revision count and reset order status to 'processing'
+    // so the worker's delivery logic (which checks for 'processing' status) works
     await prisma.order.update({
       where: { id: order.id },
-      data: { revisionsUsed: { increment: 1 } },
+      data: {
+        revisionsUsed: { increment: 1 },
+        status: 'processing',
+        processingStartedAt: new Date(),
+        processingCompletedAt: null,
+      },
     });
 
     // Create ImageJob record for the edit
