@@ -6,26 +6,14 @@
  */
 
 import type { Job } from 'bullmq';
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
 import { prisma } from '@whatsads/db';
 import type { ImageJob } from '@whatsads/db';
-import { processProductImage, processProductImageV2, processProductImageV3 } from '@whatsads/ai';
+import { processImageNeverFail, type NeverFailResult } from '@whatsads/ai';
 import { uploadFile, Buckets } from '@whatsads/storage';
 import { WhatsAppClient } from '@whatsads/whatsapp';
 import { sendProcessedImages } from '@whatsads/session';
 import { ImageProcessingJobDataSchema } from '@whatsads/queue';
 import { getConfig } from '../config.js';
-
-function getFreshAccessToken(): string {
-  try {
-    const envPath = resolve(process.cwd(), '.env');
-    const content = readFileSync(envPath, 'utf-8');
-    const match = content.match(/^WHATSAPP_ACCESS_TOKEN=(.+)$/m);
-    if (match?.[1]) return match[1].trim();
-  } catch {}
-  return getConfig().WHATSAPP_ACCESS_TOKEN;
-}
 
 export async function processImageJob(job: Job): Promise<void> {
   const config = getConfig();
@@ -45,26 +33,24 @@ export async function processImageJob(job: Job): Promise<void> {
   }).catch(() => {}); // Job record might not exist for edits
 
   try {
-    // Run AI pipeline (V3 = creative ads, V2 = Gemini-first, V1 = legacy multi-tool)
-    const pipelineVersion = process.env['PIPELINE_VERSION'] ?? 'v2';
-    const pipeline = pipelineVersion === 'v3' ? processProductImageV3
-                   : pipelineVersion === 'v2' ? processProductImageV2
-                   : processProductImage;
-    log(`Using ${pipelineVersion.toUpperCase()} pipeline`);
+    // Use never-fail pipeline — always returns a result
+    log('Using Never-Fail pipeline');
 
-    const result = await pipeline({
+    const result = await processImageNeverFail({
       imageUrl: data.inputImageUrl,
       style: data.style,
       productCategory: data.productCategory,
       voiceInstructions: data.voiceInstructions,
     });
-
-    log('Pipeline complete', {
+    log(`Pipeline complete`, {
+      tier: result.tier,
+      tierReason: result.tierReason,
       pipeline: result.pipeline,
       qaScore: result.qaScore,
       durationMs: result.durationMs,
-      attempts: result.attempts,
     });
+
+    await job.updateProgress(80);
 
     // Use pipeline output URL directly if it's already in Supabase storage
     // (the pipeline uploads internally via uploadToStorage)
@@ -115,6 +101,20 @@ export async function processImageJob(job: Job): Promise<void> {
       }
     }
 
+    await job.updateProgress(90);
+
+    // Map pipeline string to Prisma enum — new never-fail tier names fall back to 'fallback'
+    const PIPELINE_ENUM_MAP: Record<string, string> = {
+      composite: 'composite',
+      bria: 'bria',
+      kontext: 'kontext',
+      segmentation: 'segmentation',
+      nano_banana: 'nano_banana',
+      primary: 'primary',
+      fallback: 'fallback',
+    };
+    const pipelineEnum = (PIPELINE_ENUM_MAP[result.pipeline] ?? 'fallback') as any;
+
     // Update job record
     await prisma.imageJob.update({
       where: { id: data.imageJobId },
@@ -124,7 +124,7 @@ export async function processImageJob(job: Job): Promise<void> {
         cutoutUrl,
         qaScore: result.qaScore,
         qaAttempts: result.attempts,
-        pipeline: result.pipeline,
+        pipeline: pipelineEnum,
         durationMs: result.durationMs,
         completedAt: new Date(),
       },
@@ -176,7 +176,7 @@ export async function processImageJob(job: Job): Promise<void> {
         });
 
         const wa = new WhatsAppClient({
-          accessToken: getFreshAccessToken(),
+          accessToken: config.WHATSAPP_ACCESS_TOKEN,
           phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
         });
 
@@ -204,12 +204,13 @@ export async function processImageJob(job: Job): Promise<void> {
           log('Session transitioned to DELIVERED');
         }
 
+        await job.updateProgress(100);
         log('All images delivered', { count: completedUrls.length });
       }
     }
   } catch (err) {
     const errorMsg = err instanceof Error ? `${err.message}\n${err.stack}` : String(err);
-    console.error('=== IMAGE PROCESSING FAILED ===', errorMsg);
+    console.error(JSON.stringify({ event: 'image_processing_failed', job: job.id, orderId: data.orderId, error: errorMsg }));
     log('Image processing failed', { error: errorMsg });
 
     // Update job as failed
@@ -234,7 +235,7 @@ export async function processImageJob(job: Job): Promise<void> {
       const lang = (user?.language as 'hi' | 'en') || 'hi';
 
       const wa = new WhatsAppClient({
-        accessToken: getFreshAccessToken(),
+        accessToken: config.WHATSAPP_ACCESS_TOKEN,
         phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
       });
 

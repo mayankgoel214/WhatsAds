@@ -12,6 +12,11 @@ import { processSessionTimeout } from './processors/session-timeout.js';
 async function main() {
   const config = getConfig();
 
+  if (config.NODE_ENV === 'production' && process.env.PAYMENT_BYPASS === 'true') {
+    console.error('FATAL: PAYMENT_BYPASS must not be set in production');
+    process.exit(1);
+  }
+
   console.log(`Clickkar Worker starting (${config.NODE_ENV})`);
 
   // Each BullMQ Worker MUST have its own Redis connection

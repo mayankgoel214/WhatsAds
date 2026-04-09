@@ -10,7 +10,7 @@ import type { Session, User } from '@whatsads/db';
 import { prisma } from '@whatsads/db';
 import { getImageQueue } from '@whatsads/queue';
 import { transitionTo } from '../db-helpers.js';
-import { styleDisplayName } from '../messages.js';
+import { styleDisplayName, msgSendPhoto } from '../messages.js';
 import { ListIds, ButtonIds } from '../types.js';
 import type { MessageContext } from '../types.js';
 import { logger } from '../logger.js';
@@ -66,8 +66,8 @@ export async function handleSetupStyle(
       await wa.sendText(
         phoneNumber,
         lang === 'hi'
-          ? `*${styleName}* style mein bana rahe hain — bas thoda wait karein!`
-          : `Reprocessing in *${styleName}* style — just a moment!`,
+          ? `*${styleName}* mein bana rahe hain — bas thoda wait karein!`
+          : `Reprocessing in *${styleName}* — just a moment!`,
       );
 
       // Increment revision count and reset order status
@@ -124,12 +124,9 @@ export async function handleSetupStyle(
     currentOrderId: null,
   });
 
-  await wa.sendText(
-    phoneNumber,
-    lang === 'hi'
-      ? `*${styleName}* style set!\nAb product ki photo bhejiye.`
-      : `*${styleName}* style set!\nNow send your product photo.`,
-  );
+  const isFirstOrder = (user.orderCount ?? 0) === 0;
+  await wa.sendText(phoneNumber, `*${styleName}* set!`);
+  await wa.sendText(phoneNumber, msgSendPhoto(lang, isFirstOrder));
 
   logger.info('Style selected, awaiting photo', { phoneNumber, styleId });
 }

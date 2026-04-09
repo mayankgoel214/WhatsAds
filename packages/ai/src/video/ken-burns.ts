@@ -136,32 +136,39 @@ export async function generateKenBurnsVideo(
 
   const zoompanFilter = getZoompanFilter(effect, durationSec, fps, outputSize);
 
-  // Run FFmpeg
-  await new Promise<void>((resolve, reject) => {
-    ffmpeg(tmpInput)
-      .inputOptions(['-loop', '1']) // Loop single image
-      .videoFilter(zoompanFilter)
-      .outputOptions([
-        '-c:v', 'libx264',
-        '-t', String(durationSec),
-        '-pix_fmt', 'yuv420p',
-        '-preset', 'fast',
-        '-crf', '23',
-        '-movflags', '+faststart', // Streaming-friendly
-        '-an', // No audio
-      ])
-      .output(tmpOutput)
-      .on('end', () => resolve())
-      .on('error', (err) => reject(new Error(`FFmpeg error: ${err.message}`)))
-      .run();
-  });
+  // Run FFmpeg with a 30-second timeout guard
+  let videoBuffer: Buffer;
+  try {
+    const ffmpegPromise = new Promise<void>((resolve, reject) => {
+      ffmpeg(tmpInput)
+        .inputOptions(['-loop', '1']) // Loop single image
+        .videoFilter(zoompanFilter)
+        .outputOptions([
+          '-c:v', 'libx264',
+          '-t', String(durationSec),
+          '-pix_fmt', 'yuv420p',
+          '-preset', 'fast',
+          '-crf', '23',
+          '-movflags', '+faststart', // Streaming-friendly
+          '-an', // No audio
+        ])
+        .output(tmpOutput)
+        .on('end', () => resolve())
+        .on('error', (err) => reject(new Error(`FFmpeg error: ${err.message}`)))
+        .run();
+    });
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('FFmpeg video generation timed out after 30s')), 30_000)
+    );
+    await Promise.race([ffmpegPromise, timeoutPromise]);
 
-  // Read output and clean up
-  const videoBuffer = await readFile(tmpOutput);
-
-  // Clean up temp files (non-blocking)
-  unlink(tmpInput).catch(() => {});
-  unlink(tmpOutput).catch(() => {});
+    // Read output
+    videoBuffer = await readFile(tmpOutput);
+  } finally {
+    // Clean up temp files regardless of success or timeout
+    unlink(tmpInput).catch(() => {});
+    unlink(tmpOutput).catch(() => {});
+  }
 
   const durationMs = Date.now() - startMs;
   console.info(JSON.stringify({

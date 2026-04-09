@@ -107,11 +107,10 @@ export async function touchSession(phoneNumber: string): Promise<void> {
  * On creation the language defaults to 'hi'.
  */
 export async function getOrCreateUser(phoneNumber: string): Promise<User> {
-  const existing = await prisma.user.findUnique({ where: { phoneNumber } });
-  if (existing) return existing;
-
-  return prisma.user.create({
-    data: { phoneNumber, language: 'hi' },
+  return prisma.user.upsert({
+    where: { phoneNumber },
+    update: { lastSeenAt: new Date() },
+    create: { phoneNumber, language: 'hi' },
   });
 }
 

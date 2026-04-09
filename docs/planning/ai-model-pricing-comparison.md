@@ -1,4 +1,4 @@
-# AI Model Pricing Comparison for WhatsAds
+# AI Model Pricing Comparison for ClickKar
 ## Last Updated: March 2026
 
 ### Use Cases
@@ -87,7 +87,7 @@ Assumptions: 100 input tokens + 100 output tokens per request.
 
 ---
 
-## RECOMMENDED ARCHITECTURE FOR WhatsAds
+## RECOMMENDED ARCHITECTURE FOR ClickKar
 
 ### Option A: Minimize Cost (Single Provider)
 Use **Gemini 2.5 Flash Lite** for everything (vision + text parsing):

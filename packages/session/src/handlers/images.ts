@@ -17,8 +17,8 @@ import { prisma } from '@whatsads/db';
 import type { Session, User } from '@whatsads/db';
 import { uploadFile, Buckets } from '@whatsads/storage';
 import { getSessionTimeoutQueue } from '@whatsads/queue';
-import { msgPhotoReceived, msgGenericError, msgUnknownMessage } from '../messages.js';
-import { MAX_IMAGES_PER_ORDER, PHOTO_BATCH_TIMEOUT_SECONDS } from '../types.js';
+import { msgPhotoReceived, msgPhotoReadyForProcessing, msgGenericError, msgUnknownMessage } from '../messages.js';
+import { MAX_IMAGES_PER_ORDER, PHOTO_BATCH_TIMEOUT_SECONDS, BUTTONS_SHOWN_TIMEOUT_SECONDS } from '../types.js';
 import { transitionTo } from '../db-helpers.js';
 import { logger } from '../logger.js';
 import type { MessageContext } from '../types.js';
@@ -44,6 +44,30 @@ export async function handleAwaitingPhoto(
   // ---- BUTTON REPLIES (same/new style from returning user with early photo) ----
   if (message.messageType === 'interactive' && message.buttonReplyId) {
     const { ButtonIds } = await import('../types.js');
+
+    // Handle "Process now" — advance immediately
+    if (message.buttonReplyId === ButtonIds.PROCESS_NOW) {
+      if (session.imageStorageUrls.length === 0) return;
+      const freshSession = await prisma.session.findUnique({ where: { phoneNumber } });
+      if (freshSession) await advanceToPayment(freshSession, user, wa, lang);
+      return;
+    }
+
+    // Handle "Add instructions" — ask for text or voice, wait for response
+    if (message.buttonReplyId === ButtonIds.ADD_INSTRUCTIONS) {
+      await prisma.session.update({
+        where: { phoneNumber },
+        data: { earlyPhotoMediaId: 'awaiting_instructions' },
+      });
+      await wa.sendText(
+        phoneNumber,
+        lang === 'hi'
+          ? 'Kuch special instructions? Text ya voice note bhejein.'
+          : 'Any special instructions? Send text or a voice note.',
+      );
+      return;
+    }
+
     if (message.buttonReplyId === ButtonIds.SAME_STYLE && user.lastStyleUsed) {
       await prisma.session.update({
         where: { phoneNumber },
@@ -208,9 +232,31 @@ export async function handleAwaitingPhoto(
       return;
     }
 
-    // Still in photo collection phase — "done" moves to instructions prompt
+    // Buttons were shown and user typed instead of tapping — advance
+    if (session.earlyPhotoMediaId === 'awaiting_action') {
+      const freshSession = await prisma.session.findUnique({ where: { phoneNumber } });
+      if (freshSession) await advanceToPayment(freshSession, user, wa, lang);
+      return;
+    }
+
+    // Still in photo collection phase — first "done" shows process/instructions buttons
     if (isDoneIntent) {
-      await askForInstructions(session, wa, lang);
+      await prisma.session.update({
+        where: { phoneNumber },
+        data: { earlyPhotoMediaId: 'awaiting_action' },
+      });
+
+      await wa.sendButtons(
+        phoneNumber,
+        msgPhotoReadyForProcessing(lang, session.imageStorageUrls.length),
+        [
+          { id: 'process_now', title: 'Process now ✅' },
+          { id: 'add_instructions', title: 'Add instructions ✏️' },
+        ],
+      );
+
+      // Schedule auto-advance after 30s if user doesn't tap a button
+      await scheduleButtonsTimeout(phoneNumber, session.imageStorageUrls.length);
       return;
     }
 
@@ -238,7 +284,7 @@ export async function onPhotoBatchTimeout(
   const session = await prisma.session.findUnique({ where: { phoneNumber } });
   if (!session) return;
 
-  // Guard: only advance if still in AWAITING_PHOTO and count hasn't grown
+  // Guard: only act if still in AWAITING_PHOTO and count hasn't grown
   if (
     session.state !== 'AWAITING_PHOTO' ||
     session.imageStorageUrls.length !== expectedImageCount
@@ -251,42 +297,37 @@ export async function onPhotoBatchTimeout(
 
   const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
 
-  // Guard: if user already typed "done" and got the instruction prompt, or
-  // order creation is in progress, skip the timeout action
-  if (session.earlyPhotoMediaId === 'awaiting_instructions' || session.earlyPhotoMediaId === 'order_creating') {
+  // Guard: order already in progress — do nothing
+  if (session.earlyPhotoMediaId === 'order_creating') {
     return;
   }
 
-  await askForInstructions(session, wa, lang);
-}
-
-// ---------------------------------------------------------------------------
-// Ask for instructions after photos are collected
-// ---------------------------------------------------------------------------
-
-async function askForInstructions(
-  session: Session,
-  wa: WhatsAppClient,
-  lang: 'hi' | 'en',
-): Promise<void> {
-  // Re-read session to prevent duplicate sends (idempotency)
-  const fresh = await prisma.session.findUnique({ where: { phoneNumber: session.phoneNumber } });
-  if (fresh?.earlyPhotoMediaId === 'awaiting_instructions') {
+  // Second timeout fires: buttons were shown but user didn't tap — auto-advance
+  if (
+    session.earlyPhotoMediaId === 'awaiting_action' ||
+    session.earlyPhotoMediaId === 'awaiting_instructions'
+  ) {
+    await advanceToPayment(session, user, wa, lang);
     return;
   }
 
-  // Set flag so next message is treated as instructions
+  // First timeout fires: show Process / Add-instructions buttons, schedule second timeout
   await prisma.session.update({
-    where: { phoneNumber: session.phoneNumber },
-    data: { earlyPhotoMediaId: 'awaiting_instructions' },
+    where: { phoneNumber },
+    data: { earlyPhotoMediaId: 'awaiting_action' },
   });
 
-  await wa.sendText(
-    session.phoneNumber,
-    lang === 'hi'
-      ? 'Kuch special instructions? Text ya voice note bhejein.\nYa "done" likhein skip karne ke liye.'
-      : 'Any special instructions? Send text or voice note.\nOr type "done" to skip.',
+  await wa.sendButtons(
+    phoneNumber,
+    msgPhotoReadyForProcessing(lang, session.imageStorageUrls.length),
+    [
+      { id: 'process_now', title: 'Process now ✅' },
+      { id: 'add_instructions', title: 'Add instructions' },
+    ],
   );
+
+  // Schedule second (30s) timeout using the same image count as the guard value
+  await scheduleButtonsTimeout(phoneNumber, expectedImageCount);
 }
 
 // ---------------------------------------------------------------------------
@@ -314,7 +355,7 @@ async function advanceToPayment(
     data: { earlyPhotoMediaId: 'order_creating' },
   });
 
-  const styleId = session.styleSelection ?? 'style_clean_white';
+  const styleId = fresh.styleSelection ?? 'style_clean_white';
 
   await createOrderAndSendPayment({
     session: fresh,
@@ -358,6 +399,43 @@ async function schedulePhotoTimeout(
   } catch (err) {
     // Non-fatal
     logger.warn('Failed to schedule photo batch timeout', {
+      phoneNumber,
+      imageCount,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * Schedule the second (post-buttons) auto-advance timeout.
+ * Reuses the same worker event — the guard in onPhotoBatchTimeout will
+ * detect earlyPhotoMediaId === 'awaiting_action' and advance immediately.
+ */
+async function scheduleButtonsTimeout(
+  phoneNumber: string,
+  imageCount: number,
+): Promise<void> {
+  const queue = getSessionTimeoutQueue();
+  const jobId = `photo_buttons_timeout_${phoneNumber}_${Date.now()}`;
+
+  try {
+    await queue.add(
+      'advance_photos',
+      {
+        phoneNumber,
+        expectedState: 'AWAITING_PHOTO',
+        expectedImageCount: imageCount,
+        action: 'advance_photos',
+      },
+      {
+        jobId,
+        delay: BUTTONS_SHOWN_TIMEOUT_SECONDS * 1000,
+        attempts: 1,
+      },
+    );
+  } catch (err) {
+    // Non-fatal — the user can still tap the buttons
+    logger.warn('Failed to schedule post-buttons timeout', {
       phoneNumber,
       imageCount,
       error: err instanceof Error ? err.message : String(err),

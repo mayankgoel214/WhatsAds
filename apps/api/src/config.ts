@@ -37,6 +37,9 @@ const envSchema = z.object({
   GROQ_API_KEY: z.string().optional(),
   SARVAM_API_KEY: z.string().optional(),
 
+  // Admin — required in production, optional in dev
+  ADMIN_SECRET: optionalInDev(z.string().min(1)),
+
   // Sentry — always optional
   SENTRY_DSN: z.string().optional(),
 });

@@ -83,8 +83,8 @@ export async function handleIdle(
       await wa.sendButtons(
         session.phoneNumber,
         lang === 'hi'
-          ? `Wapas aao, ${user.name} ji!\nPichli baar *${styleName}* use kiya tha. Wahi style?`
-          : `Welcome back, ${user.name}!\nLast time you used *${styleName}*. Same style?`,
+          ? `${user.name} ji! Photo bhejiye — ${styleName} mein banayenge.\nStyle badlana hai?`
+          : `${user.name}! Send your photo — we'll use ${styleName}.\nWant a different style?`,
         [
           { id: ButtonIds.SAME_STYLE, title: lang === 'hi' ? 'Haan, wahi' : 'Yes, same' },
           { id: ButtonIds.NEW_STYLE, title: lang === 'hi' ? 'Naya style' : 'New style' },

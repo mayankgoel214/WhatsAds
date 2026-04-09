@@ -484,7 +484,12 @@ RULES:
 `;
 
   if (voiceInstructions && voiceInstructions.trim().length > 0) {
-    prompt += `\nUser's additional instructions (incorporate into scene): ${voiceInstructions.trim()}\n\n`;
+    const sanitizedInstructions = voiceInstructions
+      .trim()
+      .slice(0, 500)
+      .replace(/[\x00-\x1F\x7F]/g, '') // strip control characters
+      .replace(/\n{3,}/g, '\n\n'); // collapse excessive newlines
+    prompt += `\nUser's additional instructions (incorporate into scene): ${sanitizedInstructions}\n\n`;
   }
 
   prompt += `Return this exact JSON structure:
@@ -566,7 +571,7 @@ export async function analyzeAndPlan(
   const startMs = Date.now();
 
   const genai = new GoogleGenAI({
-    apiKey: process.env['GOOGLE_GENAI_API_KEY']!,
+    apiKey: process.env['GOOGLE_AI_API_KEY'] ?? process.env['GOOGLE_GENAI_API_KEY'] ?? '',
   });
 
   const base64Image = imageBuffer.toString('base64');
@@ -574,18 +579,24 @@ export async function analyzeAndPlan(
 
   const prompt = buildFullPrompt(style, voiceInstructions);
 
-  const response = await genai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          { inlineData: { mimeType, data: base64Image } },
-          { text: prompt },
-        ],
-      },
-    ],
-  });
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('analyzeAndPlan timed out after 60s')), 60_000)
+  );
+  const response = await Promise.race([
+    genai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType, data: base64Image } },
+            { text: prompt },
+          ],
+        },
+      ],
+    }),
+    timeoutPromise,
+  ]);
 
   const rawText = response.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
   const cleaned = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
@@ -637,8 +648,15 @@ export async function generateAdPrompt(
   voiceInstructions?: string
 ): Promise<string> {
   // This is now handled inside analyzeAndPlan, but keep for backward compat
-  const genai = new GoogleGenAI({ apiKey: process.env['GOOGLE_GENAI_API_KEY']! });
-  const prompt = `Generate a 40-70 word creative ad scene prompt for this product. The product is already placed on a canvas — describe ONLY the scene around it. No text, no words, no "8k", no "quality". Photorealistic only. Product is the ONLY main subject. No competing objects.\n\nProduct: ${JSON.stringify(analysis)}${voiceInstructions ? `\n\nUser instructions: ${voiceInstructions}` : ''}`;
+  const genai = new GoogleGenAI({ apiKey: process.env['GOOGLE_AI_API_KEY'] ?? process.env['GOOGLE_GENAI_API_KEY'] ?? '' });
+  const sanitizedInstructions = voiceInstructions
+    ? voiceInstructions
+        .trim()
+        .slice(0, 500)
+        .replace(/[\x00-\x1F\x7F]/g, '') // strip control characters
+        .replace(/\n{3,}/g, '\n\n') // collapse excessive newlines
+    : undefined;
+  const prompt = `Generate a 40-70 word creative ad scene prompt for this product. The product is already placed on a canvas — describe ONLY the scene around it. No text, no words, no "8k", no "quality". Photorealistic only. Product is the ONLY main subject. No competing objects.\n\nProduct: ${JSON.stringify(analysis)}${sanitizedInstructions ? `\n\nUser instructions: ${sanitizedInstructions}` : ''}`;
 
   const response = await genai.models.generateContent({
     model: 'gemini-2.5-flash-lite',

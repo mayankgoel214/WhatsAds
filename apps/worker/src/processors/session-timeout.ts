@@ -43,13 +43,21 @@ export async function processSessionTimeout(job: Job): Promise<void> {
 
   switch (data.action) {
     case 'nudge': {
-      log('Sending nudge message');
-      await wa.sendText(
-        data.phoneNumber,
-        lang === 'hi'
-          ? 'Kya aap abhi busy hain? Koi baat nahi.\nJab time ho, sirf "Hi" bhejiye — main yahan hun.'
-          : 'Are you busy right now? No problem.\nWhen ready, just send "Hi" — I\'m here.',
-      );
+      // PROCESSING nudge → tell user processing is taking a bit longer
+      if (session.state === 'PROCESSING') {
+        log('Sending processing delay nudge');
+        const { msgProcessingDelay } = await import('@whatsads/session');
+        await wa.sendText(data.phoneNumber, msgProcessingDelay(lang));
+      } else {
+        // Generic inactivity nudge for other states
+        log('Sending inactivity nudge message');
+        await wa.sendText(
+          data.phoneNumber,
+          lang === 'hi'
+            ? 'Kya aap abhi busy hain? Koi baat nahi.\nJab time ho, sirf "Hi" bhejiye — main yahan hun.'
+            : 'Are you busy right now? No problem.\nWhen ready, just send "Hi" — I\'m here.',
+        );
+      }
       break;
     }
 

@@ -1,0 +1,15 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "apps/worker/Dockerfile"
+buildCommand = ""
+
+[deploy]
+startCommand = "node apps/worker/dist/index.js"
+# Workers have no HTTP port — Railway will detect no binding and keep alive
+# Set this so Railway doesn't kill the container waiting for a port
+healthcheckPath = ""
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 5
+
+[[deploy.region]]
+region = "ap-south-1"

@@ -1,4 +1,4 @@
-# WhatsAds — Complete Technical Integration Specification
+# ClickKar — Complete Technical Integration Specification
 
 > WhatsApp-only product photography service. Users send product photos via WhatsApp, pay Rs 99, receive
 > AI-processed professional photos back. This document covers every technical decision needed to build the
@@ -41,7 +41,7 @@ Migration steps:
 6. Choose OTP delivery method: SMS or Voice Call.
 7. Enter the 6-digit OTP. The number is now registered on the Cloud API.
 
-**Recommendation for WhatsAds:** Do NOT use your personal WhatsApp number. Get a dedicated SIM
+**Recommendation for ClickKar:** Do NOT use your personal WhatsApp number. Get a dedicated SIM
 (Jio/Airtel) for the business number. This number becomes the bot's identity and cannot be used on any
 WhatsApp app concurrently.
 
@@ -407,7 +407,7 @@ export async function sendTemplate(
 }
 
 // Example: send welcome template with user name
-// await sendTemplate("919876543210", "whatsads_welcome", "en", [
+// await sendTemplate("919876543210", "clickkar_welcome", "en", [
 //   { type: "body", parameters: [{ type: "text", text: "Rahul" }] }
 // ]);
 ```
@@ -461,14 +461,14 @@ export async function downloadAndStoreMedia(
   );
 
   const { error } = await supabase.storage
-    .from("whatsads-media")
+    .from("clickkar-media")
     .upload(filename, buffer, { contentType: mime_type, upsert: false });
 
   if (error) throw new Error(`Storage upload failed: ${error.message}`);
 
   // Return public or signed URL
   const { data } = supabase.storage
-    .from("whatsads-media")
+    .from("clickkar-media")
     .getPublicUrl(filename);
 
   return data.publicUrl;
@@ -505,7 +505,7 @@ export async function downloadAndStoreMedia(
 | Tier 3 | 100,000 | Quality rating maintained |
 | Unlimited | No limit | Volume + quality threshold |
 
-**WhatsAds implication:** At launch, you are limited to 250 unique users per day. Submit business
+**ClickKar implication:** At launch, you are limited to 250 unique users per day. Submit business
 verification (GSTIN, company registration) immediately to unlock Tier 1.
 
 **Media upload rate limit:** 25 requests/second per phone number.
@@ -552,7 +552,7 @@ Starting July 1, 2025, Meta switched from per-conversation to per-message pricin
 - When the CSW closes: you can ONLY send approved template messages (marketing, utility, or
   authentication). You cannot send free-form messages.
 
-**WhatsAds cost model example:**
+**ClickKar cost model example:**
 - User sends photo → CSW opens (free)
 - Bot replies with onboarding instructions → free (service message)
 - Bot sends payment link → free (utility template within CSW, or free service message)
@@ -587,14 +587,14 @@ this; verify on your dashboard).
 6. From April 9, 2025: Meta can automatically re-categorize your template (e.g., from Utility to
    Marketing). This changes billing. Monitor your approved templates.
 
-**Templates you must create for WhatsAds before launch:**
+**Templates you must create for ClickKar before launch:**
 
 | Template Name | Category | Purpose |
 |---|---|---|
-| `whatsads_welcome` | Utility | First contact when user messages for first time |
-| `whatsads_payment_reminder` | Utility | Re-engage user who started order but did not pay |
-| `whatsads_order_complete` | Utility | Deliver processed photos after >24h |
-| `whatsads_reorder_promo` | Marketing | Upsell to returning customers |
+| `clickkar_welcome` | Utility | First contact when user messages for first time |
+| `clickkar_payment_reminder` | Utility | Re-engage user who started order but did not pay |
+| `clickkar_order_complete` | Utility | Deliver processed photos after >24h |
+| `clickkar_reorder_promo` | Marketing | Upsell to returning customers |
 
 **What happens when the CSW expires mid-conversation:**
 - The bot can no longer send free-form messages.
@@ -602,7 +602,7 @@ this; verify on your dashboard).
 - Your state machine must detect this and switch to template-only mode.
 - Implementation: check `last_user_message_at` timestamp. If `now - last_user_message_at > 23h`,
   proactively use templates for any outbound messages.
-- If the user is in AWAITING_PAYMENT state and 24h passes, send `whatsads_payment_reminder` template.
+- If the user is in AWAITING_PAYMENT state and 24h passes, send `clickkar_payment_reminder` template.
 
 ---
 
@@ -644,7 +644,7 @@ export interface CreatePaymentLinkOptions {
   orderId: string;       // Your internal order ID (for idempotency)
   userPhone: string;     // "919876543210"
   userName: string;
-  expiresInMinutes?: number; // Default 30 minutes for WhatsAds urgency
+  expiresInMinutes?: number; // Default 30 minutes for ClickKar urgency
 }
 
 export async function createPaymentLink(opts: CreatePaymentLinkOptions): Promise<string> {
@@ -654,7 +654,7 @@ export async function createPaymentLink(opts: CreatePaymentLinkOptions): Promise
     amount: 9900,           // Rs 99 in paise
     currency: "INR",
     accept_partial: false,
-    description: "WhatsAds — Professional Product Photography",
+    description: "ClickKar — Professional Product Photography",
     customer: {
       contact: `+${opts.userPhone}`,
       name: opts.userName,
@@ -668,7 +668,7 @@ export async function createPaymentLink(opts: CreatePaymentLinkOptions): Promise
     expire_by: expireBy,
     options: {
       checkout: {
-        name: "WhatsAds",
+        name: "ClickKar",
         prefill: { contact: `+${opts.userPhone}` },
         // Make UPI appear first
         method: {
@@ -710,7 +710,7 @@ PhonePe, Paytm, BHIM, etc.).
 const upiLink = await razorpay.paymentLink.create({
   amount: 9900,
   currency: "INR",
-  description: "WhatsAds Product Photography",
+  description: "ClickKar Product Photography",
   upi_link: true,          // Makes this UPI-only
   customer: { contact: `+${userPhone}` },
   reference_id: orderId,
@@ -921,7 +921,7 @@ async function handlePaymentFailed(payload: RazorpayPaymentFailedPayload) {
     // Too many failures — offer support
     await sendText(
       order.user_phone,
-      "We noticed 3 payment attempts failed. Please try a different payment method or contact us at support@whatsads.com"
+      "We noticed 3 payment attempts failed. Please try a different payment method or contact us at support@clickkar.com"
     );
     return;
   }
@@ -1017,7 +1017,7 @@ will appear. Full white-labeling requires an enterprise agreement.
 | PhonePe for Business | Yes (UPI only) | No | Medium | 0% (UPI, mandate-based) |
 | Razorpay WhatsApp Pay | Not generally available | Yes, in beta | High (waitlist) | TBD |
 
-**Recommendation:** Razorpay Payment Links is the right choice for WhatsAds. Cashfree is slightly
+**Recommendation:** Razorpay Payment Links is the right choice for ClickKar. Cashfree is slightly
 cheaper (1.75% vs 2%) but Razorpay has better documentation, webhook reliability, and Indian developer
 ecosystem support. The difference at Rs 99 is Rs 0.23 per transaction — irrelevant at early scale.
 
@@ -1066,7 +1066,7 @@ native binary. Alternatively, use a Supabase Edge Function with Deno and call a 
 
 ### 3.2 Transcription API Comparison for Indian Languages
 
-#### Option A: Sarvam AI (RECOMMENDED for WhatsAds)
+#### Option A: Sarvam AI (RECOMMENDED for ClickKar)
 
 **Why:** Built specifically for Indian languages. Only API with all 22 scheduled Indian languages plus
 code-switching support. Priced in INR. Understands Indian phone-quality audio.
@@ -1230,7 +1230,7 @@ export async function transcribeWithDeepgram(audioBuffer: ArrayBuffer): Promise<
 
 **Weaknesses:** Very poor noise handling (2.8/10 vs Whisper's 8.6/10). WhatsApp voice notes are
 recorded on phones in real-world environments with significant background noise. Google STT degrades
-badly in these conditions. Not recommended for WhatsAds use case.
+badly in these conditions. Not recommended for ClickKar use case.
 
 ---
 
@@ -1570,7 +1570,7 @@ export async function handleStaleSessionCleanup() {
       await sendText(session.phone_number, "Your payment link is still active. Tap it to complete your Rs 99 payment.");
     } else {
       // CSW expired — must use template
-      await sendTemplate(session.phone_number, "whatsads_payment_reminder", "en", [
+      await sendTemplate(session.phone_number, "clickkar_payment_reminder", "en", [
         { type: "body", parameters: [{ type: "text", text: session.orders.order_id }] }
       ]);
     }
@@ -1677,7 +1677,7 @@ a new interactive message if you need to offer choices again.
 **Carousel:** WhatsApp does not support a native image carousel in standard messages. You can send
 multiple image messages sequentially. Carousel templates exist but are available only through certain
 BSPs (Business Solution Providers) like 360dialog or MessageBird and require special approval. For
-WhatsAds, send processed photos as separate image messages (3 variants = 3 separate messages).
+ClickKar, send processed photos as separate image messages (3 variants = 3 separate messages).
 
 ### 5.5 Text Message Limits
 
@@ -1723,7 +1723,7 @@ WhatsApp messages without encoding conversion.
 ## DATABASE SCHEMA
 
 ```sql
--- Full schema for WhatsAds
+-- Full schema for ClickKar
 
 -- Sessions (conversation state per phone number)
 create table sessions (

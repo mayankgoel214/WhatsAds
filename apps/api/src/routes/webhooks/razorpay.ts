@@ -73,27 +73,27 @@ export async function razorpayWebhookRoutes(app: FastifyInstance): Promise<void>
         return;
       }
 
-      // Create payment record
-      await prisma.payment.create({
-        data: {
-          orderId: order.id,
-          razorpayPaymentId: event.paymentId,
-          razorpayPaymentLinkId: event.paymentLinkId,
-          amount: event.amount,
-          method: event.method,
-          status: 'captured',
-          capturedAt: new Date(),
-        },
-      });
-
-      // Update order status
-      await prisma.order.update({
-        where: { id: order.id },
-        data: {
-          status: 'payment_confirmed',
-          razorpayPaymentId: event.paymentId,
-        },
-      });
+      // Create payment record and update order atomically
+      await prisma.$transaction([
+        prisma.payment.create({
+          data: {
+            orderId: order.id,
+            razorpayPaymentId: event.paymentId,
+            razorpayPaymentLinkId: event.paymentLinkId,
+            amount: event.amount,
+            method: event.method,
+            status: 'captured',
+            capturedAt: new Date(),
+          },
+        }),
+        prisma.order.update({
+          where: { id: order.id },
+          data: {
+            status: 'payment_confirmed',
+            razorpayPaymentId: event.paymentId,
+          },
+        }),
+      ]);
 
       // Create WhatsApp client and trigger session flow
       const wa = new WhatsAppClient({

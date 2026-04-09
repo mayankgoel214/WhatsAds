@@ -3,7 +3,7 @@
  * with deep product analysis and tailored ad prompts.
  *
  * Run:
- *   cd /Users/lending/WhatsAds && npx tsx scripts/test-pipeline.ts
+ *   cd /Users/lending/Clickkar && npx tsx scripts/test-pipeline.ts
  */
 
 import { readFileSync } from 'fs';
@@ -29,7 +29,7 @@ function loadEnv(envPath: string): void {
   }
 }
 
-loadEnv(resolve('/Users/lending/WhatsAds/.env'));
+loadEnv(resolve('/Users/lending/Clickkar/.env'));
 
 import { processProductImage } from '../packages/ai/dist/index.js';
 

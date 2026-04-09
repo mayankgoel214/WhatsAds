@@ -34,7 +34,7 @@ async function main() {
   registerRawBodyParser(app);
 
   // Plugins
-  await app.register(cors, { origin: true });
+  await app.register(cors, { origin: false });
 
   // Routes
   await app.register(healthRoutes);

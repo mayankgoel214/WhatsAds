@@ -11,6 +11,7 @@ import { getImageQueue } from '@whatsads/queue';
 import { transitionTo } from '../db-helpers.js';
 import { msgPhotoReceivedWithPayment, msgProcessingStarted, styleDisplayName } from '../messages.js';
 import { PRICE_PER_IMAGE_PAISE, ButtonIds } from '../types.js';
+import { sendPaymentLink } from './payment.js';
 import { logger } from '../logger.js';
 
 // ---------------------------------------------------------------------------
@@ -94,17 +95,12 @@ export async function createOrderAndSendPayment(params: CreateOrderParams): Prom
     await enqueueImageJobs(order.id, phoneNumber, imageStorageUrls, styleId, voiceInstructions, user.businessType ?? undefined);
   } else {
     // Paid order — create payment link
-    await transitionTo(phoneNumber, 'AWAITING_PAYMENT', {
+    const updatedSession = await transitionTo(phoneNumber, 'AWAITING_PAYMENT', {
       currentOrderId: order.id,
       styleSelection: styleId,
     });
 
-    // TODO: Create Razorpay payment link for paid orders
-    // For now in dev, payment is handled by the AWAITING_PAYMENT handler
-    await wa.sendText(
-      phoneNumber,
-      lang === 'hi' ? 'Payment link bhej raha hun...' : 'Sending payment link...',
-    );
+    await sendPaymentLink(updatedSession, user, wa);
   }
 }
 

@@ -1,4 +1,5 @@
 import { GoogleGenAI, Modality } from '@google/genai';
+import { geminiImageBreaker } from './circuit-breaker.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -28,7 +29,7 @@ export interface GeminiGenerateResult {
 // ---------------------------------------------------------------------------
 
 function getGenAI(): GoogleGenAI {
-  const apiKey = process.env['GOOGLE_GENAI_API_KEY'] ?? process.env['GOOGLE_AI_API_KEY'] ?? '';
+  const apiKey = process.env['GOOGLE_AI_API_KEY'] ?? process.env['GOOGLE_GENAI_API_KEY'] ?? '';
   return new GoogleGenAI({ apiKey });
 }
 
@@ -48,7 +49,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   ]);
 }
 
-const GEMINI_MODEL = 'gemini-3.1-flash-image-preview';
+const GEMINI_MODEL = process.env['GEMINI_IMAGE_MODEL'] ?? 'gemini-3.1-flash-image-preview';
 const TIMEOUT_MS = 90_000;
 
 // ---------------------------------------------------------------------------
@@ -65,6 +66,12 @@ export async function geminiGenerateImage(
   const { inputImageBuffer, prompt, temperature = 0.7 } = params;
 
   const startMs = Date.now();
+
+  // Circuit breaker check
+  if (geminiImageBreaker.isOpen()) {
+    throw new Error('Gemini image generation circuit breaker is OPEN — skipping to fallback');
+  }
+
   console.info(JSON.stringify({ event: 'gemini_generate_start', model: GEMINI_MODEL, promptLength: prompt.length }));
 
   const genAI = getGenAI();
@@ -127,13 +134,50 @@ export async function geminiGenerateImage(
     return { imageBuffer, textResponse };
   };
 
-  try {
-    return await withTimeout(work(), TIMEOUT_MS, 'geminiGenerateImage');
-  } catch (err) {
-    const durationMs = Date.now() - startMs;
-    console.info(JSON.stringify({ event: 'gemini_generate_error', durationMs, error: String(err) }));
-    throw err;
+  const MAX_RETRIES = 3;
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      // Exponential backoff with jitter: 2s, 4s, 8s base + random jitter
+      const baseDelay = Math.min(60_000, 2000 * Math.pow(2, attempt));
+      const jitter = Math.random() * baseDelay * 0.25;
+      const delay = baseDelay + jitter;
+      console.info(JSON.stringify({ event: 'gemini_generate_retry', attempt, delayMs: Math.round(delay) }));
+      await new Promise(r => setTimeout(r, delay));
+    }
+
+    try {
+      const result = await withTimeout(work(), TIMEOUT_MS, 'geminiGenerateImage');
+      geminiImageBreaker.recordSuccess();
+      return result;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      const errStr = String(err);
+
+      // Don't retry on client errors (400, safety blocks)
+      if (errStr.includes('"code":400') || errStr.includes('SAFETY') || errStr.includes('PROHIBITED_CONTENT')) {
+        geminiImageBreaker.recordFailure();
+        const durationMs = Date.now() - startMs;
+        console.info(JSON.stringify({ event: 'gemini_generate_error', durationMs, error: errStr }));
+        throw lastError;
+      }
+
+      // Retry on server errors (429, 500, 503, 504, timeout)
+      console.warn(JSON.stringify({
+        event: 'gemini_generate_retry_error',
+        attempt,
+        error: errStr.slice(0, 200),
+        model: GEMINI_MODEL,
+      }));
+    }
   }
+
+  // All retries exhausted
+  geminiImageBreaker.recordFailure();
+  const durationMs = Date.now() - startMs;
+  console.error(JSON.stringify({ event: 'gemini_generate_all_retries_failed', durationMs, retries: MAX_RETRIES }));
+  throw lastError ?? new Error('All Gemini generation retries failed');
 }
 
 // ---------------------------------------------------------------------------

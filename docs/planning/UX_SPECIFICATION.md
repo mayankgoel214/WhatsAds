@@ -1,4 +1,4 @@
-# WhatsAds — Complete WhatsApp UX Specification
+# ClickKar — Complete WhatsApp UX Specification
 **Version 1.0 — March 2026**
 **Audience: Solo developer building the WhatsApp bot + AI processing pipeline**
 
@@ -6,7 +6,7 @@
 
 ## DOCUMENT CONVENTIONS
 
-- `[BOT]` = message sent by WhatsAds bot
+- `[BOT]` = message sent by ClickKar bot
 - `[USER]` = message sent by the user
 - `[BUTTON]` = WhatsApp interactive button (max 3 per message, max 20 chars per label)
 - `[QUICK REPLY]` = quick reply chip (max 3 per message, max 20 chars)
@@ -56,11 +56,11 @@ If NO → go to Returning User Flow (Section 5).
 **[BOT — Message 1]** `[DELAY: 0s]`
 
 ```
-H: Namaste! 🙏 Main WhatsAds hun.
+H: Namaste! 🙏 Main ClickKar hun.
 Aapke product ki photo leke use professional bana deta hun — seedha WhatsApp pe.
 Sirf Rs 99 mein. 60 second mein result.
 
-E: Hi! I'm WhatsAds.
+E: Hi! I'm ClickKar.
 Send me your product photo — I'll make it look professional. Rs 99 per image. Result in 60 seconds.
 ```
 
@@ -272,10 +272,10 @@ Inserted after name collection (between Message 5 and Message 6), delivered once
 
 ```
 H: Ek zaruri baat — aapki photos sirf editing ke liye use hoti hain.
-Hum aapka data kisi aur ko nahi dete. Details: whatsads.in/privacy
+Hum aapka data kisi aur ko nahi dete. Details: clickkar.in/privacy
 
 E: Quick note — your photos are used only for editing.
-We never share your data. Details: whatsads.in/privacy
+We never share your data. Details: clickkar.in/privacy
 ```
 
 `[QUICK REPLY]`
@@ -730,9 +730,9 @@ And tell your friends too!
 
 `[BUTTON]`
 - "Nayi photo bhejo" (Send new photo)
-- "Share karo" (Share WhatsAds number)
+- "Share karo" (Share ClickKar number)
 
-> **Dev note:** "Share karo" button uses WhatsApp's native share sheet to share a pre-written message: "Yeh number save karo — product photos Rs 99 mein 60 second mein milti hain: [WhatsAds number]". This is the primary viral growth mechanic.
+> **Dev note:** "Share karo" button uses WhatsApp's native share sheet to share a pre-written message: "Yeh number save karo — product photos Rs 99 mein 60 second mein milti hain: [ClickKar number]". This is the primary viral growth mechanic.
 
 ---
 
@@ -1203,7 +1203,7 @@ Any questions: +91-XXXXXXXXXX
 
 ### 6H. New User Detection (Number Forwarded by a Friend)
 
-**Scenario:** Existing user shares the WhatsAds number to a friend. Friend messages. Bot sees new phone number.
+**Scenario:** Existing user shares the ClickKar number to a friend. Friend messages. Bot sees new phone number.
 
 **[BOT]**
 
@@ -1241,7 +1241,7 @@ Only product photos are accepted.
 
 ### 6J. User Messages Outside Business Hours
 
-> **There are no business hours for WhatsAds** — the service is 24/7 automated. However, the support human (developer) is available only 9 AM–9 PM.
+> **There are no business hours for ClickKar** — the service is 24/7 automated. However, the support human (developer) is available only 9 AM–9 PM.
 
 If user explicitly asks to speak to a person:
 
@@ -1318,7 +1318,7 @@ Please try again tomorrow — we'll be back.
 | Send new photo | Nayi photo bhejo | Send new photo |
 | Change style | Style badlo | Change style |
 | Confirm order | Haan, shuru karo! | Yes, start! |
-| Share WhatsAds | Share karo | Share |
+| Share ClickKar | Share karo | Share |
 | Resend payment | Payment link dobara | Resend link |
 | Cancel | Cancel karo | Cancel |
 | See example | Example dekho | See example |
@@ -1378,7 +1378,7 @@ The bot does not need to be "pure Hindi." Hinglish (Hindi-English mix) is natura
 - Data breach: Notify DPBI within 72 hours if any breach occurs
 
 ### Privacy Policy URL
-Every conversation: `whatsads.in/privacy` (must exist on launch)
+Every conversation: `clickkar.in/privacy` (must exist on launch)
 
 ---
 
@@ -1424,5 +1424,5 @@ Each user has a session state. States:
 
 *Document Version: 1.0*
 *Created: March 27, 2026*
-*Product: WhatsAds*
-*Author: WhatsAds Product Team*
+*Product: ClickKar*
+*Author: ClickKar Product Team*

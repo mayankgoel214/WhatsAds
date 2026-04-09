@@ -5,3 +5,17 @@ dist/
 !.env.example
 *.tsbuildinfo
 .turbo/
+package-lock.json
+
+# Claude Code
+.claude/
+
+# OS files
+.DS_Store
+*.log
+
+# Test results
+scripts/results/
+
+# TypeScript build info
+*.tsbuildinfo

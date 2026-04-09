@@ -219,21 +219,20 @@ export async function processProductImageV3(
     const reason = plan?.rejectionReason ?? 'Analysis failed — image may not contain a usable product';
     console.info(JSON.stringify({ event: 'v3_input_rejected', reason }));
 
-    const studio = await createStudioShot(params.imageUrl, params.productCategory ?? 'other');
-    let output = await postProcessFinal(studio.studioBuffer, params.style);
-    output = await addAILabel(output);
-    const outputUrl = await uploadToStorage(output, `output_${Date.now()}.jpg`);
-
-    return {
-      outputUrl,
-      qaScore: 0,
-      pipeline: 'composite',
-      attempts: 0,
-      durationMs: Date.now() - totalStart,
-      inputAssessment: { usable: false, productCategory: params.productCategory ?? 'other' },
-      rejected: true,
-      rejectionReason: reason,
-    };
+    try {
+      const studio = await createStudioShot(params.imageUrl, params.productCategory ?? 'other');
+      let output = await postProcessFinal(studio.studioBuffer, params.style);
+      output = await addAILabel(output);
+      const outputUrl = await uploadToStorage(output, `output_${Date.now()}.jpg`);
+      return { outputUrl, qaScore: 0, pipeline: 'composite', attempts: 0, durationMs: Date.now() - totalStart, inputAssessment: { usable: false, productCategory: params.productCategory ?? 'other' }, rejected: true, rejectionReason: reason };
+    } catch (studioErr) {
+      console.error(JSON.stringify({ event: 'v3_rejection_studio_failed', error: studioErr instanceof Error ? studioErr.message : String(studioErr) }));
+      // Last resort: enhanced original with AI label
+      let output = await postProcessFinal(processedBuffer, params.style);
+      output = await addAILabel(output);
+      const outputUrl = await uploadToStorage(output, `output_${Date.now()}.jpg`);
+      return { outputUrl, qaScore: 0, pipeline: 'composite', attempts: 0, durationMs: Date.now() - totalStart, inputAssessment: { usable: false, productCategory: params.productCategory ?? 'other' }, rejected: true, rejectionReason: reason };
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -263,9 +262,24 @@ export async function processProductImageV3(
     const isGradient = params.style === 'style_gradient';
     const isOutdoor = params.style === 'style_outdoor';
     const isMinimal = params.style === 'style_minimal';
+    const isFestive = params.style === 'style_festive';
+    const isStudio = params.style === 'style_studio';
+    const isCleanWhite = params.style === 'style_clean_white';
+    const isLifestyle = params.style === 'style_lifestyle';
+
+    const componentsList = validPlan.analysis?.productComponents?.length
+      ? `Detected components from input photo: ${validPlan.analysis.productComponents.join(', ')}.`
+      : '';
 
     return `Study this product photo — note exact shape, colors, branding, logos, texture. Use ONLY as visual reference.
 ${warningBlock}
+== PRODUCT COMPONENTS & ACCESSORIES (CRITICAL — HIGHER PRIORITY THAN CREATIVE BRIEF) ==
+${componentsList}
+Preserve ALL visible components from the original photo. If the product has a cap, lid, cover, box, stand, applicator, or any accessory that is visible in the input image, it MUST appear in the generated ad — either attached to the product in its natural position, or placed elegantly beside it. Do NOT remove, hide, or omit any component that is visible in the original photo. A perfume bottle with a cap must show the cap (on the bottle or placed next to it). A jar with a lid must show the lid. A device with a charging cable must show the cable. Every piece that ships with or appears on the product must be represented.
+
+== PRODUCT ACCURACY (CRITICAL) ==
+Product MUST match input photo exactly — same shape, colors, text, logos, material texture. If it has text/logos, they must be legible and correctly spelled. Exactly ONE product — never duplicated.${isSmall ? ' TIGHT macro-style crop — small product DOMINATES the frame.' : ''} Product fills approximately ${fillPct}% of the frame.
+
 == CREATIVE BRIEF (FOLLOW THIS EXACTLY) ==
 ${validPlan.creativeBrief}
 
@@ -275,9 +289,6 @@ ${validPlan.heroMoment}
 == DYNAMIC ELEMENTS (these MUST appear in the image) ==
 ${dynamicList}
 
-== PRODUCT ACCURACY (CRITICAL) ==
-Product MUST match input photo exactly — same shape, colors, text, logos, material texture. If it has text/logos, they must be legible and correctly spelled. Exactly ONE product — never duplicated.${isSmall ? ' TIGHT macro-style crop — small product DOMINATES the frame.' : ''} Product fills approximately ${fillPct}% of the frame.
-
 == PRODUCT MUST LOOK PHOTOGRAPHED, NOT RENDERED ==
 The product must look like a REAL PHYSICAL OBJECT photographed by a camera — NOT a 3D render or CGI.
 - PACKAGING MATERIAL: If the product has plastic/foil packaging, it must show realistic specular highlights where the key light catches the shiny surface. The packaging should have subtle crinkle texture and slight dimensional bulging from contents inside — not a flat texture on a perfect rectangle.
@@ -286,7 +297,28 @@ The product must look like a REAL PHYSICAL OBJECT photographed by a camera — N
 - The product should look PREMIUM and BEAUTIFUL — like a high-end photoshoot — but still clearly a photograph of a physical object, not a digital illustration.
 
 == RULES ==
-- EDGE TO EDGE — no borders, frames, or decorative edges. Scene extends to all four canvas edges.
+${isFestive ? `== MANDATORY FESTIVE SCENE ==
+- Scene MUST include: warm diya/candle glow as primary or accent light (2700-3000K)
+- Cultural props required: at least one of: brass thali, marigold petals/garlands, rangoli pattern, silk/velvet fabric, gold elements
+- Background: warm golden bokeh with fairy lights at multiple depths
+- Color palette: deep maroon, gold, amber, saffron — NO cool tones
+- This is a Diwali/Indian festival celebration — NOT a gym, office, or modern minimalist setting
+` : ''}${isStudio ? `== COLORED STUDIO RULES ==
+- Clean colored backdrop — NOT white, choose a color that complements the product
+- Professional studio lighting setup
+- Minimal or no props — product is the star
+- No outdoor elements, no lifestyle context
+` : ''}${isCleanWhite ? `== CLEAN WHITE RULES ==
+- Pure white (#FFFFFF) background — no gradients, no colors
+- Soft, even, shadowless lighting
+- Product floating or on a barely-visible white surface
+- E-commerce style: clean, clinical, professional
+` : ''}${isLifestyle ? `== LIFESTYLE RULES ==
+- Warm, relatable indoor setting (home, cafe, workspace)
+- Natural window light or warm artificial light
+- Contextual props that match the product's use case
+- Aspirational but not unrealistic
+` : ''}- EDGE TO EDGE — no borders, frames, or decorative edges. Scene extends to all four canvas edges.
 - ZERO text except what is physically ON the product. No watermarks, labels, "AI Generated" text.
 - Square 1:1 format.${params.style !== 'style_with_model' ? `
 - ABSOLUTELY NO PEOPLE. No person, hands, fingers, arms, body parts, mannequin, or silhouette.` : ''}${isGradient ? `
@@ -575,7 +607,15 @@ Make ONLY this fix. Do not change the overall scene, composition, dynamic elemen
   // Stage 7: Upload
   // -------------------------------------------------------------------------
 
-  const outputUrl = await uploadToStorage(adBuffer, `output_${Date.now()}.jpg`);
+  let outputUrl: string;
+  try {
+    outputUrl = await uploadToStorage(adBuffer, `output_${Date.now()}.jpg`);
+  } catch (uploadErr) {
+    console.error(JSON.stringify({ event: 'v3_upload_failed_retry', error: uploadErr instanceof Error ? uploadErr.message : String(uploadErr) }));
+    // Retry once after 2 seconds
+    await new Promise(r => setTimeout(r, 2000));
+    outputUrl = await uploadToStorage(adBuffer, `output_${Date.now()}.jpg`);
+  }
 
   // -------------------------------------------------------------------------
   // Stage 8: Ken Burns Video (free, non-blocking)
@@ -637,7 +677,7 @@ async function selectBestCandidate(
 
   const { GoogleGenAI } = await import('@google/genai');
   const genAI = new GoogleGenAI({
-    apiKey: process.env['GOOGLE_GENAI_API_KEY'] ?? process.env['GOOGLE_AI_API_KEY'] ?? '',
+    apiKey: process.env['GOOGLE_AI_API_KEY'] ?? process.env['GOOGLE_GENAI_API_KEY'] ?? '',
   });
 
   function detectMime(buf: Buffer): string {

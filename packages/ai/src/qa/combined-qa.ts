@@ -220,7 +220,7 @@ export async function combinedQualityCheck(
   const startMs = Date.now();
 
   const genai = new GoogleGenAI({
-    apiKey: process.env['GOOGLE_GENAI_API_KEY']!,
+    apiKey: process.env['GOOGLE_AI_API_KEY'] ?? process.env['GOOGLE_GENAI_API_KEY'] ?? '',
   });
 
   const outputBase64 = outputBuffer.toString('base64');
@@ -242,10 +242,16 @@ export async function combinedQualityCheck(
   }
 
   try {
-    const response = await genai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [{ role: 'user', parts }],
-    });
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('combinedQualityCheck timed out after 30s')), 30_000)
+    );
+    const response = await Promise.race([
+      genai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: [{ role: 'user', parts }],
+      }),
+      timeoutPromise,
+    ]);
 
     const rawText = response.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
     const cleaned = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
@@ -269,11 +275,20 @@ export async function combinedQualityCheck(
 
     return result.data;
   } catch (err) {
-    console.error(JSON.stringify({
-      event: 'combined_qa_error',
-      error: err instanceof Error ? err.message : String(err),
-      durationMs: Date.now() - startMs,
-    }));
+    const isTimeout = err instanceof Error && err.message.includes('timed out');
+    if (isTimeout) {
+      console.warn(JSON.stringify({
+        event: 'combined_qa_timeout',
+        error: err.message,
+        durationMs: Date.now() - startMs,
+      }));
+    } else {
+      console.error(JSON.stringify({
+        event: 'combined_qa_error',
+        error: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - startMs,
+      }));
+    }
 
     // Fail conservative — assume bad quality so we try fallback
     return {

@@ -12,7 +12,7 @@ import type { WhatsAppClient } from '@whatsads/whatsapp';
 import { prisma } from '@whatsads/db';
 import type { Session, User, Order } from '@whatsads/db';
 import { createPaymentLink } from '@whatsads/payment';
-import { getPaymentCheckQueue, getImageQueue } from '@whatsads/queue';
+import { getPaymentCheckQueue, getImageQueue, getSessionTimeoutQueue } from '@whatsads/queue';
 import { transitionTo } from '../db-helpers.js';
 import {
   msgPaymentPending,
@@ -112,6 +112,26 @@ export async function onPaymentConfirmed(
     await wa.sendText(phoneNumber, msgProcessingStarted(lang));
 
     await enqueueImageJobs(orderId, phoneNumber, order);
+
+    // Schedule a proactive delay notification at 90 seconds.
+    // If the session is still in PROCESSING when it fires, sends msgProcessingDelay.
+    try {
+      const timeoutQueue = getSessionTimeoutQueue();
+      await timeoutQueue.add(
+        'session-timeout',
+        {
+          phoneNumber,
+          expectedState: 'PROCESSING',
+          action: 'nudge',
+        },
+        { delay: 90_000, jobId: `processing_nudge_${phoneNumber}_${Date.now()}` },
+      );
+    } catch (nudgeErr) {
+      logger.warn('Failed to schedule processing nudge job', {
+        phoneNumber,
+        error: nudgeErr instanceof Error ? nudgeErr.message : String(nudgeErr),
+      });
+    }
   } catch (err) {
     logger.error('onPaymentConfirmed failed', {
       orderId,
@@ -169,7 +189,7 @@ export async function enqueueImageJobs(
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function sendPaymentLink(
+export async function sendPaymentLink(
   session: Session,
   user: User,
   wa: WhatsAppClient,

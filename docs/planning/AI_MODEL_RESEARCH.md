@@ -1,6 +1,6 @@
-# WhatsAds — AI Model Cost Research
+# ClickKar — AI Model Cost Research
 **Date:** March 27, 2026
-**Purpose:** Find the cheapest viable AI models for every stage of the WhatsAds pipeline
+**Purpose:** Find the cheapest viable AI models for every stage of the ClickKar pipeline
 **Current plan being replaced:** Claude Haiku Vision (too expensive per founder's feedback)
 
 ---
@@ -56,7 +56,7 @@ Replacement: **Gemini 2.5 Flash** and **Gemini 2.5 Flash Lite** are the current 
 - **Structured JSON:** Good — inherits JSON mode from 2.5 family
 - **Availability:** Google AI Studio, OpenRouter
 - **Quality assessment:** Good but lighter reasoning than 2.5 Flash. For straightforward product category detection and basic quality scoring, likely sufficient. Edge cases (unusual products, very ambiguous photos) may underperform.
-- **Verdict:** 13x cheaper than Haiku 4.5. Best cost option in the Gemini family for this task. Recommended for most WhatsAds image assessments.
+- **Verdict:** 13x cheaper than Haiku 4.5. Best cost option in the Gemini family for this task. Recommended for most ClickKar image assessments.
 
 ---
 
@@ -507,7 +507,7 @@ The task: Generate a professional product photography background (lifestyle scen
 
 - **Pricing:** $0.025/megapixel (same as Flux Dev)
 - **Unique capability:** Understands image context — can change backgrounds while preserving the subject. Also works as an image editing model (not just generation).
-- **Verdict:** For WhatsAds, this is actually very interesting — you can pass the product cutout and generate a background around it in one call, rather than separate generation + compositing steps. Test this workflow.
+- **Verdict:** For ClickKar, this is actually very interesting — you can pass the product cutout and generate a background around it in one call, rather than separate generation + compositing steps. Test this workflow.
 
 ---
 
@@ -595,7 +595,7 @@ The task: Generate a professional product photography background (lifestyle scen
 - **Pricing:** $0.014/run on Replicate
 - **What it does:** Relights portrait foregrounds using text descriptions of desired lighting
 - **Product images:** NOT designed for product photography. Focused on portraits.
-- **Verdict:** Not suitable for WhatsAds product use case.
+- **Verdict:** Not suitable for ClickKar product use case.
 
 ---
 
@@ -624,7 +624,7 @@ These tools take a product image and output a professional product photo with a 
 - **API availability:** YES — documented API with background removal, Product Beautifier, lighting adjustment, reposition, virtual model, ghost mannequin
 - **Pricing:** Subscription-based. Basic plan (background removal only). Plus plan (full editing). Exact per-image cost requires account signup. Likely $0.01-0.05/image based on scale tiers.
 - **Quality:** Excellent — PhotoRoom is used by millions of e-commerce businesses
-- **Verdict:** WORTH EVALUATING. If priced at $0.01-0.02/image, it may be cheaper than a full DIY pipeline AND produce better results. Request pricing directly. The Product Beautifier feature could handle the entire WhatsAds workflow.
+- **Verdict:** WORTH EVALUATING. If priced at $0.01-0.02/image, it may be cheaper than a full DIY pipeline AND produce better results. Request pricing directly. The Product Beautifier feature could handle the entire ClickKar workflow.
 
 ---
 
@@ -662,7 +662,7 @@ These tools take a product image and output a professional product photo with a 
 
 ### END-TO-END TOOLS VERDICT
 
-No current end-to-end tool provides a clear cost AND quality win over a DIY pipeline for the specific WhatsAds use case (WhatsApp product photo → branded product shot). The DIY pipeline gives you more control and is likely cheaper. PhotoRoom API is the one exception worth evaluating — their Product Beautifier may handle the entire job.
+No current end-to-end tool provides a clear cost AND quality win over a DIY pipeline for the specific ClickKar use case (WhatsApp product photo → branded product shot). The DIY pipeline gives you more control and is likely cheaper. PhotoRoom API is the one exception worth evaluating — their Product Beautifier may handle the entire job.
 
 ---
 

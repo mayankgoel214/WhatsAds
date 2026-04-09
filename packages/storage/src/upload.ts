@@ -21,10 +21,14 @@ export async function uploadFile(
 ): Promise<string> {
   const client = getStorageClient();
 
-  const { error } = await client.storage.from(bucket).upload(path, buffer, {
+  const uploadPromise = client.storage.from(bucket).upload(path, buffer, {
     contentType,
     upsert: true,
   });
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error(`Storage upload timed out after 30s`)), 30_000)
+  );
+  const { error } = await Promise.race([uploadPromise, timeoutPromise]);
 
   if (error) {
     throw new Error(

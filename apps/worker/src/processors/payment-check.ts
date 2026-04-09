@@ -46,25 +46,26 @@ export async function processPaymentCheck(job: Job): Promise<void> {
     });
 
     if (!existing) {
-      // Create payment record
-      await prisma.payment.create({
-        data: {
-          orderId: order.id,
-          razorpayPaymentId: status.paymentId,
-          razorpayPaymentLinkId: data.paymentLinkId,
-          amount: order.amount,
-          status: 'captured',
-          capturedAt: new Date(),
-        },
-      });
-
-      await prisma.order.update({
-        where: { id: order.id },
-        data: {
-          status: 'payment_confirmed',
-          razorpayPaymentId: status.paymentId,
-        },
-      });
+      // Create payment record and update order atomically
+      await prisma.$transaction([
+        prisma.payment.create({
+          data: {
+            orderId: order.id,
+            razorpayPaymentId: status.paymentId,
+            razorpayPaymentLinkId: data.paymentLinkId,
+            amount: order.amount,
+            status: 'captured',
+            capturedAt: new Date(),
+          },
+        }),
+        prisma.order.update({
+          where: { id: order.id },
+          data: {
+            status: 'payment_confirmed',
+            razorpayPaymentId: status.paymentId,
+          },
+        }),
+      ]);
 
       const wa = new WhatsAppClient({
         accessToken: config.WHATSAPP_ACCESS_TOKEN,

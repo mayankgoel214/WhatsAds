@@ -51,9 +51,9 @@ export function msgInstructionsReceived(lang: Lang): string {
 
 export function msgWelcomeBackWithStyle(lang: Lang, name: string, styleName: string): string {
   if (lang === 'hi') {
-    return `Wapas aao, ${name} ji!\nPichli baar ${styleName} use kiya tha. Wahi style?`;
+    return `${name} ji! Photo bhejiye — ${styleName} mein banayenge.\nStyle badlana hai?`;
   }
-  return `Welcome back, ${name}!\nLast time you used ${styleName}. Same style?`;
+  return `${name}! Send your photo — we'll use ${styleName}.\nWant a different style?`;
 }
 
 export function msgWelcomeBackNoStyle(lang: Lang, name: string): string {
@@ -63,16 +63,29 @@ export function msgWelcomeBackNoStyle(lang: Lang, name: string): string {
   return `Welcome back, ${name}!\nReady for a new product photo?`;
 }
 
-export function msgSendPhoto(lang: Lang): string {
-  if (lang === 'hi') {
-    return 'Photo bhejiye — 5 tak bhej sakte hain.';
+export function msgSendPhoto(lang: Lang, isFirstOrder: boolean): string {
+  if (isFirstOrder) {
+    if (lang === 'hi') {
+      return 'Photo bhejiye! 📸 Pehli photo bilkul free.\n(Zyada bheji to Rs 99 per photo.)';
+    }
+    return 'Send your photo! 📸 First one is free.\n(Additional photos are Rs 99 each.)';
   }
-  return 'Send your photo — up to 5 at once.';
+  if (lang === 'hi') {
+    return 'Photo bhejiye! 📸\n5 tak bhej sakte hain. Rs 99 per photo.';
+  }
+  return 'Send your photo! 📸\nUp to 5 at once. Rs 99 per photo.';
 }
 
 // ---------------------------------------------------------------------------
 // PHOTO RECEIVED
 // ---------------------------------------------------------------------------
+
+export function msgPhotoReadyForProcessing(lang: Lang, count: number): string {
+  if (lang === 'hi') {
+    return `${count} photo${count > 1 ? 'en' : ''} taiyaar! Process karein ya instructions add karein?`;
+  }
+  return `${count} photo${count > 1 ? 's' : ''} ready! Process now or add instructions?`;
+}
 
 export function msgPhotoReceived(lang: Lang, count: number): string {
   if (count === 1) {
@@ -98,9 +111,9 @@ export function msgPhotoReceivedWithPayment(
     return `Photo received, ${name}!\n${photoText} • ${styleName}\nYour first one is free! Rs 0`;
   }
   if (lang === 'hi') {
-    return `Photo mil gayi, ${name} ji!\n${photoText} • ${styleName}\nRs ${totalRs} ka payment karein.`;
+    return `${name} ji, ${photoText} • ${styleName}\nRs ${totalRs} — UPI se 1 minute mein ho jayega.`;
   }
-  return `Photo received, ${name}!\n${photoText} • ${styleName}\nPay Rs ${totalRs} to get started.`;
+  return `${name}, ${photoText} • ${styleName}\nRs ${totalRs} via UPI — done in 1 minute.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,9 +140,9 @@ export function msgPaymentConfirmed(lang: Lang): string {
 
 export function msgProcessingStarted(lang: Lang): string {
   if (lang === 'hi') {
-    return 'Kaam shuru! 60 second mein ready.';
+    return 'Ho gaya! ✨ Ab 60 second mein aapki photo aayegi.';
   }
-  return 'Processing started! Ready in about 60 seconds.';
+  return 'Done! ✨ Your photo will be ready in about 60 seconds.';
 }
 
 export function msgPaymentPending(lang: Lang): string {
@@ -159,9 +172,9 @@ export function msgProcessingDelay(lang: Lang): string {
 
 export function msgProcessingStuck(lang: Lang): string {
   if (lang === 'hi') {
-    return 'Maaf kijiye, processing mein dikkat aayi. Photo dobara bhejein.';
+    return 'Arre! Kuch gadbad ho gayi. 😔\nEk baar aur try kar raha hun — 2 minute mein ready hoga.';
   }
-  return 'Sorry, there was an issue with processing. Please send your photo again.';
+  return 'Oops! Something went wrong. 😔\nRetrying now — should be ready in 2 minutes.';
 }
 
 // ---------------------------------------------------------------------------
@@ -187,14 +200,14 @@ export function msgAskFeedback(lang: Lang): string {
 export function msgThankYou(lang: Lang, isFirstOrder: boolean): string {
   if (isFirstOrder) {
     if (lang === 'hi') {
-      return 'Bahut shukriya!\nAgle baar sirf Rs 99 mein. Worth it?';
+      return 'Bahut badiya! 🎉\nYeh photo Instagram ya WhatsApp group pe share karein — customers ko dikhao!\n\nAgle baar sirf Rs 99 mein. Ek aur photo banwani hai?';
     }
-    return 'Thank you!\nNext one is just Rs 99. Worth it?';
+    return 'Awesome! 🎉\nShare this on Instagram or your WhatsApp group — show it to customers!\n\nNext one is just Rs 99. Want another photo?';
   }
   if (lang === 'hi') {
-    return 'Shukriya! Doston ko bhi Clickkar ke baare mein batayein.';
+    return 'Bahut badiya! 🎉\nYeh photo share karein — customers ko dikhao!\n\nEk aur product ki photo banwani hai?';
   }
-  return 'Thank you! Tell your friends about Clickkar.';
+  return 'Awesome! 🎉\nShare this photo — show it to customers!\n\nWant another product photo?';
 }
 
 // ---------------------------------------------------------------------------
@@ -221,16 +234,16 @@ export function msgRevisionLimitReached(lang: Lang): string {
 
 export function msgUnknownMessage(lang: Lang): string {
   if (lang === 'hi') {
-    return 'Samajh nahi aaya. Photo bhejein ya option chuniye.';
+    return 'Samajh nahi aaya. 🤔 Photo bhejein ya neeche se option chuniye.';
   }
-  return "Didn't catch that. Send a photo or choose an option.";
+  return "Didn't catch that. 🤔 Send a photo or tap an option below.";
 }
 
 export function msgGenericError(lang: Lang): string {
   if (lang === 'hi') {
-    return 'Kuch gadbad ho gayi. Thodi der baad try karein.';
+    return 'Oho! Kuch gadbad ho gayi. 😅 Ek minute baad try karein.';
   }
-  return 'Something went wrong. Please try again in a moment.';
+  return 'Oops! Something went wrong. 😅 Try again in a minute.';
 }
 
 export function msgEarlyPhotoAck(lang: Lang): string {

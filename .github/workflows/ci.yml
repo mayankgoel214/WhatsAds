@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main, staging]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, Typecheck, Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Prisma client must be generated before typecheck
+      - name: Generate Prisma client
+        run: pnpm db:generate
+        env:
+          DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
+
+      - name: Typecheck all packages
+        run: pnpm typecheck
+
+      - name: Build all packages
+        run: pnpm build
+        env:
+          DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: check
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/staging' && github.event_name == 'push'
+    environment: staging
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy API to staging
+        run: railway up --service clickkar-api --environment staging --detach
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+
+      - name: Deploy Worker to staging
+        run: railway up --service clickkar-worker --environment staging --detach
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+
+  deploy-production:
+    name: Deploy to Production
+    needs: check
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy API to production
+        run: railway up --service clickkar-api --environment production --detach
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+
+      - name: Deploy Worker to production
+        run: railway up --service clickkar-worker --environment production --detach
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}

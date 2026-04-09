@@ -79,7 +79,7 @@ export async function downloadMedia(
   try {
     const metaRes = await fetch(
       `https://graph.facebook.com/${apiVersion}/${mediaId}`,
-      { headers: { Authorization: authHeader } }
+      { headers: { Authorization: authHeader }, signal: AbortSignal.timeout(10_000) }
     );
 
     if (!metaRes.ok) {
@@ -122,6 +122,7 @@ export async function downloadMedia(
   try {
     const cdnRes = await fetch(cdnUrl, {
       headers: { Authorization: authHeader },
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!cdnRes.ok) {

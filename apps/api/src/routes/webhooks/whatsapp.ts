@@ -6,25 +6,12 @@
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
 import { WhatsAppClient, extractMessage, getMessageType, verifyWebhookSignature } from '@whatsads/whatsapp';
 import type { WhatsAppWebhookBody } from '@whatsads/whatsapp';
 import { handleIncomingMessage } from '@whatsads/session';
 import type { MessageContext } from '@whatsads/session';
 import { prisma } from '@whatsads/db';
 import { getConfig } from '../../config.js';
-
-/** Read the latest WHATSAPP_ACCESS_TOKEN from .env at runtime (avoids server restart on token change) */
-function getFreshAccessToken(): string {
-  try {
-    const envPath = resolve(process.cwd(), '.env');
-    const content = readFileSync(envPath, 'utf-8');
-    const match = content.match(/^WHATSAPP_ACCESS_TOKEN=(.+)$/m);
-    if (match?.[1]) return match[1].trim();
-  } catch {}
-  return getConfig().WHATSAPP_ACCESS_TOKEN;
-}
 
 // ---------------------------------------------------------------------------
 // Simple in-memory rate limiter: max 60 requests/minute per IP
@@ -33,6 +20,23 @@ function getFreshAccessToken(): string {
 const RATE_LIMIT_MAX = 60;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const rateLimitMap = new Map<string, number[]>();
+
+// Purge stale entries every 60 seconds to prevent unbounded memory growth.
+setInterval(() => {
+  const cutoff = Date.now() - RATE_LIMIT_WINDOW_MS;
+  for (const [ip, timestamps] of rateLimitMap) {
+    const fresh = timestamps.filter(t => t > cutoff);
+    if (fresh.length === 0) {
+      rateLimitMap.delete(ip);
+    } else {
+      rateLimitMap.set(ip, fresh);
+    }
+  }
+  // Nuclear option: if the map is still enormous, clear it entirely.
+  if (rateLimitMap.size > 10_000) {
+    rateLimitMap.clear();
+  }
+}, 60_000).unref();
 
 function isRateLimited(ip: string): boolean {
   const now = Date.now();
@@ -76,33 +80,38 @@ export async function whatsappWebhookRoutes(app: FastifyInstance): Promise<void>
       return reply.code(429).send({ error: 'Too many requests', code: 'RATE_LIMITED' });
     }
 
-    // Always return 200 immediately — Meta requires response within 20s
-    // Process asynchronously after responding
+    // Verify signature BEFORE responding — HMAC takes <1ms so this is safe.
+    // Meta only requires the 200 within 20s; heavy processing still runs async below.
+    const signature = req.headers['x-hub-signature-256'] as string | undefined;
+    const rawBody = (req as any).rawBody as string | undefined;
+
+    if (config.NODE_ENV === 'production') {
+      if (!signature || !rawBody) {
+        app.log.warn('Missing signature or raw body');
+        return reply.code(401).send({ error: 'Missing signature', code: 'UNAUTHORIZED' });
+      }
+      if (!verifyWebhookSignature(rawBody, signature, config.WHATSAPP_APP_SECRET)) {
+        app.log.warn('Invalid WhatsApp webhook signature — rejecting request');
+        return reply.code(401).send({ error: 'Invalid signature', code: 'UNAUTHORIZED' });
+      }
+    } else {
+      // Development mode: skip verification when secret is the placeholder value.
+      if (config.WHATSAPP_APP_SECRET === 'placeholder') {
+        app.log.warn('WHATSAPP_APP_SECRET is placeholder — skipping signature verification in dev');
+      } else if (!signature || !rawBody) {
+        app.log.warn('Missing signature or raw body');
+        return reply.code(401).send({ error: 'Missing signature', code: 'UNAUTHORIZED' });
+      } else if (!verifyWebhookSignature(rawBody, signature, config.WHATSAPP_APP_SECRET)) {
+        app.log.warn('Invalid WhatsApp webhook signature (dev mode — continuing anyway)');
+      }
+    }
+
+    // Signature passed (or skipped in dev). Respond 200 immediately so Meta is
+    // satisfied within its 20-second window. All DB writes and processing below
+    // run asynchronously after the response is flushed.
     reply.code(200).send('OK');
 
     try {
-      // Verify signature
-      const signature = req.headers['x-hub-signature-256'] as string | undefined;
-      const rawBody = (req as any).rawBody as string | undefined;
-
-      if (!signature || !rawBody) {
-        app.log.warn('Missing signature or raw body');
-        return;
-      }
-
-      if (config.NODE_ENV === 'production') {
-        if (!verifyWebhookSignature(rawBody, signature, config.WHATSAPP_APP_SECRET)) {
-          app.log.warn('Invalid WhatsApp webhook signature — rejecting request');
-          return;
-        }
-      } else {
-        if (config.WHATSAPP_APP_SECRET === 'placeholder') {
-          app.log.warn('WHATSAPP_APP_SECRET is placeholder — skipping signature verification in dev');
-        } else if (!verifyWebhookSignature(rawBody, signature, config.WHATSAPP_APP_SECRET)) {
-          app.log.warn('Invalid WhatsApp webhook signature (dev mode — continuing anyway)');
-        }
-      }
-
       const body = req.body as WhatsAppWebhookBody;
 
       // Store raw event for debugging/audit
@@ -157,9 +166,9 @@ export async function whatsappWebhookRoutes(app: FastifyInstance): Promise<void>
             : undefined,
       };
 
-      // Create WhatsApp client with fresh token (re-reads .env each time)
+      // Create WhatsApp client
       const wa = new WhatsAppClient({
-        accessToken: getFreshAccessToken(),
+        accessToken: config.WHATSAPP_ACCESS_TOKEN,
         phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
       });
 

@@ -50,8 +50,11 @@ export const MAX_IMAGES_PER_ORDER = 5;
 /** Free revisions per order */
 export const FREE_REVISIONS_PER_ORDER = 2;
 
-/** Seconds to wait for more photos before advancing */
+/** Seconds to wait for more photos before showing Process/Instructions buttons */
 export const PHOTO_BATCH_TIMEOUT_SECONDS = 45;
+
+/** Seconds to wait after showing Process/Instructions buttons before auto-advancing */
+export const BUTTONS_SHOWN_TIMEOUT_SECONDS = 30;
 
 /** Payment check job delay in milliseconds (2 minutes) */
 export const PAYMENT_CHECK_DELAY_MS = 120_000;
@@ -81,6 +84,9 @@ export const ButtonIds = {
   EDIT_STYLE: 'edit_style',
   EDIT_CROP: 'edit_crop',
   EDIT_OTHER: 'edit_other',
+  // Photo batch — process or add instructions
+  PROCESS_NOW: 'process_now',
+  ADD_INSTRUCTIONS: 'add_instructions',
 } as const;
 
 // Category → recommended style mapping

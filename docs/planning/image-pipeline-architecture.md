@@ -1,4 +1,4 @@
-# WhatsAds AI Image Processing Pipeline — Complete Technical Architecture
+# ClickKar AI Image Processing Pipeline — Complete Technical Architecture
 
 **Document Version:** 1.0
 **Last Updated:** March 2026
@@ -1650,4 +1650,4 @@ At 10,000 jobs/month generating Rs 9,90,000 revenue, API cost is Rs 17,085 — a
 
 ---
 
-*This document is the definitive technical specification for the WhatsAds image processing pipeline. All API choices, cost estimates, and timing budgets are based on verified pricing as of March 2026. Costs should be re-verified quarterly as model pricing changes frequently.*
+*This document is the definitive technical specification for the ClickKar image processing pipeline. All API choices, cost estimates, and timing budgets are based on verified pricing as of March 2026. Costs should be re-verified quarterly as model pricing changes frequently.*

@@ -58,7 +58,7 @@ export async function parseEditInstructions(
   }
 
   const genai = new GoogleGenAI({
-    apiKey: process.env['GOOGLE_GENAI_API_KEY']!,
+    apiKey: process.env['GOOGLE_AI_API_KEY'] ?? process.env['GOOGLE_GENAI_API_KEY'] ?? '',
   });
 
   let editCommand: EditCommand;

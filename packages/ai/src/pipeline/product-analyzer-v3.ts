@@ -17,6 +17,7 @@ const ProductAnalysisSchema = z.object({
   material: z.string(),
   shape: z.string(),
   keyVisualElements: z.union([z.array(z.string()), z.string()]).transform(v => Array.isArray(v) ? v : [v]),
+  productComponents: z.union([z.array(z.string()), z.string()]).transform(v => Array.isArray(v) ? v : v === 'none' || v === '' ? [] : [v]).catch([]).describe('List of all visible physical sub-components: caps, lids, straws, cables, stands, boxes, tags, applicators'),
   visibleText: z.union([z.array(z.string()), z.string()]).transform(v => Array.isArray(v) ? v : v === 'none' || v === '' ? [] : [v]),
   targetAudience: z.string(),
   priceSegment: z.string().transform(v => {
@@ -149,7 +150,7 @@ const STYLE_NARRATIVES: Record<string, Record<string, string>> = {
   },
 
   style_with_model: {
-    food: `CAUGHT IN THE ACT OF ENJOYING — PERSON IS MANDATORY. Think about HOW this specific food is eaten and show THAT moment. Chips/snacks: person reaching into the bag, one chip near mouth, satisfied crunch expression. Cookies/sweets: person biting into one, eyes closed in satisfaction, crumbs on fingers. Drinks/beverages: person mid-sip or just lowered the bottle with a refreshed exhale. Spices/cooking ingredients: person cooking, tasting from a spoon, steam rising. Protein bars/health food: person in gym clothes, post-workout, unwrapping it. The product AND its packaging must be clearly visible. NOT a posed smile — a REAL moment of enjoyment. Warm light, shallow DOF, contextual environment matching how the food is consumed.`,
+    food: `CAUGHT IN THE ACT OF ENJOYING — PERSON IS MANDATORY. Think about HOW this specific food is eaten and show THAT moment. Chips/snacks: person reaching into the bag, one chip near mouth, satisfied crunch expression. Cookies/sweets: person biting into one, eyes closed in satisfaction, crumbs on fingers. Drinks/beverages: person HOLDING the sealed product (cap ON) near face level, showing anticipation. If the product has a cap or lid in the input photo, it MUST remain attached — do NOT show the product open, mid-sip, or uncapped. Spices/cooking ingredients: person cooking, tasting from a spoon, steam rising. Protein bars/health food: person in gym clothes, post-workout, unwrapping it. The product AND its packaging must be clearly visible. NOT a posed smile — a REAL moment of enjoyment. Warm light, shallow DOF, contextual environment matching how the food is consumed.`,
     skincare: `BEAUTY RITUAL IN ACTION — PERSON IS MANDATORY. Show the EXACT moment of using THIS specific product. Serum: person applying drops to face with the dropper, dewy skin glowing. Face cream: fingertips scooping from the jar, mid-application on cheek. Face wash: person at sink, foam on face, eyes closed. Sunscreen: person applying on arm/face before going outside. Lip product: person applying in front of mirror. Hair oil: person working it through hair. The product container MUST be prominently visible — either in hand or placed nearby on the vanity. Soft bathroom/vanity light. The viewer thinks "I want that glow."`,
     jewellery: `ADORNED ELEGANCE — PERSON IS MANDATORY. Show the intimate moment of WEARING this jewelry. Necklace: Indian woman touching it at collarbone, looking down admiringly, tight crop collarbone-to-chin. Earrings: side profile or 3/4 view, tucking hair behind ear to reveal the earring. Ring: hand resting on a surface, ring catching light, or adjusting it. Bracelet/bangles: wrist visible while pouring chai or arranging flowers. The jewelry MUST be the brightest, sharpest element — hard accent light creating sparkle on gems. Soft key light on skin. Warm skin tones. Confidence, desire, beauty.`,
     electronics: `IN THE ZONE — PERSON IS MANDATORY. Show the person ACTIVELY USING this specific device in its natural context. Headphones/earbuds: person with eyes closed, lost in music, slight head bob. Phone: person scrolling with a soft smile, screen glow on face. Speaker: person in living room, dancing or swaying to music. Fitness tracker/watch: person mid-workout, glancing at wrist. Laptop: person typing intently at a café, coffee nearby. Power bank: person charging phone at airport, waiting. Keyboard/mouse: person gaming or working, focused expression. The product enabling a genuine MOMENT. Warm-cool light contrast, shallow DOF.`,
@@ -282,6 +283,24 @@ Example 8 — Protein Bar (style_with_model — PERSON IN CONTEXT):
 `;
 
 // ---------------------------------------------------------------------------
+// Style Mandate Helper
+// ---------------------------------------------------------------------------
+
+function getStyleMandate(style: string): string {
+  const mandates: Record<string, string> = {
+    style_festive: 'FESTIVE/DIWALI SCENE: Warm diya glow (2700-3000K), cultural props (brass thali, marigold petals, rangoli), golden bokeh, rich jewel tones. Scene must feel like an Indian celebration/festival. NO modern/gym/office settings.',
+    style_gradient: 'DARK LUXURY: Deep black or dark gradient background, dramatic rim lighting, reflective surface, minimal props. Moody, premium, cinematic feel. NO bright/outdoor/festive settings.',
+    style_outdoor: 'NATURAL OUTDOOR: Golden-hour natural light, organic textures (wood, stone, leaves), real outdoor environment. NO studio/indoor settings.',
+    style_lifestyle: 'LIFESTYLE SETTING: Warm home/cafe/workspace environment, natural light, lived-in feel with contextual props. Aspirational but relatable.',
+    style_studio: 'COLORED STUDIO: Clean colored backdrop (not white), professional studio lighting, product-focused with minimal props.',
+    style_clean_white: 'CLEAN WHITE: Pure white background, soft even lighting, product floating or on minimal surface. E-commerce style.',
+    style_minimal: 'MINIMAL & CLEAN: Muted neutral tones, very few props, lots of negative space, calm and elegant composition.',
+    style_with_model: 'WITH HUMAN MODEL: An Indian person naturally interacting with the product. Lifestyle context appropriate to the product category.',
+  };
+  return mandates[style] ?? 'Follow the selected style closely.';
+}
+
+// ---------------------------------------------------------------------------
 // V3 Prompt Builder
 // ---------------------------------------------------------------------------
 
@@ -300,6 +319,11 @@ function buildV3Prompt(style?: string, voiceInstructions?: string): string {
 
 Your response MUST be valid JSON only — no markdown, no explanation.
 
+== MANDATORY STYLE: ${styleKey} ==
+Every field you return — heroMoment, storyScene, creativeBrief, dynamicElements — MUST match this style.
+${getStyleMandate(styleKey)}
+Do NOT override this style based on product type. The user chose this style explicitly.
+
 ## STEP 1: Input Quality Assessment
 - Is this photo usable? Reject only if: no product visible, extremely blurry (<100px), corrupted
 - Accept messy backgrounds, poor lighting, bad angles — we fix everything
@@ -308,6 +332,7 @@ Your response MUST be valid JSON only — no markdown, no explanation.
 
 ## STEP 2: Product Identification (be EXTREMELY specific)
 Full brand name, product type, variant, size. NOT "speaker" but "Anker SoundCore 2 Portable Bluetooth Speaker, black mesh front, ANKER logo on face."
+- productComponents: List EVERY visible physical sub-component of the product (cap, lid, straw, cable, stand, box, tag, applicator, tube, wrapper). Be exhaustive — if you can see it, list it.
 
 ## STEP 2.5: Physical Characteristics
 - "productPhysicalSize": "tiny" (palm-sized) | "small" (hand-sized) | "medium" (forearm-sized) | "large" (bigger)
@@ -332,7 +357,7 @@ What single EMOTIONAL MOMENT should this ad capture? Not "product on a nice back
 ### 5b: Dynamic Elements
 What specific MOTION, TEXTURE, or ACTION elements make this ad come alive? These are the details that separate a boring product photo from a COMPELLING advertisement. Examples: water splashes, crumbs scattered, steam rising, condensation droplets, ingredients mid-fall, fabric draping, sparkle on gems, smoke wisps, liquid pouring.
 
-Choose elements appropriate to this product and style:
+The style is FIXED as ${styleKey}. You MUST use ONLY these elements — do NOT invent a different setting or context:
 ${narrativeEntries}
 
 ### 5c: Emotional Trigger
@@ -374,7 +399,12 @@ An EMPTY scene matching the style with NO product. "no products, no objects in c
 `;
 
   if (voiceInstructions && voiceInstructions.trim().length > 0) {
-    prompt += `\nUser's additional instructions (incorporate into concept): ${voiceInstructions.trim()}\n\n`;
+    const sanitizedInstructions = voiceInstructions
+      .trim()
+      .slice(0, 500)
+      .replace(/[\x00-\x1F\x7F]/g, '') // strip control characters
+      .replace(/\n{3,}/g, '\n\n'); // collapse excessive newlines
+    prompt += `\nUser's additional instructions (incorporate into concept): ${sanitizedInstructions}\n\n`;
   }
 
   prompt += `Return this exact JSON structure:
@@ -399,6 +429,7 @@ An EMPTY scene matching the style with NO product. "no products, no objects in c
     "material": string,
     "shape": string,
     "keyVisualElements": string[],
+    "productComponents": string[],
     "visibleText": string[],
     "targetAudience": string,
     "priceSegment": "budget" | "mid_range" | "premium" | "luxury",
@@ -450,7 +481,7 @@ export async function analyzeAndPlanV3(
   const startMs = Date.now();
 
   const genai = new GoogleGenAI({
-    apiKey: process.env['GOOGLE_GENAI_API_KEY']!,
+    apiKey: process.env['GOOGLE_AI_API_KEY'] ?? process.env['GOOGLE_GENAI_API_KEY'] ?? '',
   });
 
   const base64Image = imageBuffer.toString('base64');
@@ -458,18 +489,24 @@ export async function analyzeAndPlanV3(
 
   const prompt = buildV3Prompt(style, voiceInstructions);
 
-  const response = await genai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          { inlineData: { mimeType, data: base64Image } },
-          { text: prompt },
-        ],
-      },
-    ],
-  });
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('analyzeAndPlanV3 timed out after 60s')), 60_000)
+  );
+  const response = await Promise.race([
+    genai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType, data: base64Image } },
+            { text: prompt },
+          ],
+        },
+      ],
+    }),
+    timeoutPromise,
+  ]);
 
   const rawText = response.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
   const cleaned = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();

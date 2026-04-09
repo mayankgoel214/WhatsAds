@@ -1,9 +1,10 @@
 /**
  * Admin routes for development/testing.
- * Reset test user data with: curl -X POST http://localhost:3001/admin/reset/15406050446
+ * Reset test user data with: curl -X POST http://localhost:3001/admin/reset/PHONE_NUMBER
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { getConfig } from '../config.js';
 import { prisma } from '@whatsads/db';
 import { getRedisConnection } from '@whatsads/queue';
 import { getStorageClient } from '@whatsads/storage';
@@ -53,9 +54,10 @@ async function deleteStorageFiles(app: FastifyInstance, urls: string[]): Promise
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
   // Auth guard: require x-admin-secret header in production
   app.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
-    if (process.env.NODE_ENV === 'production') {
+    const config = getConfig();
+    if (config.NODE_ENV === 'production') {
       const secret = req.headers['x-admin-secret'];
-      if (!secret || secret !== process.env.ADMIN_SECRET) {
+      if (!secret || secret !== config.ADMIN_SECRET) {
         return reply.code(403).send({ error: 'Forbidden', code: 'ADMIN_AUTH_REQUIRED' });
       }
     }
@@ -66,6 +68,11 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
   app.post('/admin/flush-queue/:queueName', async (req: FastifyRequest, reply: FastifyReply) => {
     const { queueName } = req.params as { queueName: string };
     const redis = getRedisConnection();
+
+    const ALLOWED_QUEUES = ['image-processing', 'payment-check', 'session-timeout'];
+    if (!ALLOWED_QUEUES.includes(queueName)) {
+      return reply.code(400).send({ error: 'Invalid queue name', allowed: ALLOWED_QUEUES });
+    }
 
     try {
       const keys = await redis.keys(`bull:${queueName}:*`);

@@ -6,7 +6,7 @@ import { geminiEditImage } from './gemini-generate.js';
 // ---------------------------------------------------------------------------
 
 function getGenAI(): GoogleGenAI {
-  const apiKey = process.env['GOOGLE_GENAI_API_KEY'] ?? process.env['GOOGLE_AI_API_KEY'] ?? '';
+  const apiKey = process.env['GOOGLE_AI_API_KEY'] ?? process.env['GOOGLE_GENAI_API_KEY'] ?? '';
   return new GoogleGenAI({ apiKey });
 }
 

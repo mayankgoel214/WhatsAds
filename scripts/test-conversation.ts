@@ -3,7 +3,7 @@
  * session state machine directly (no real WhatsApp credentials needed).
  *
  * Run:
- *   cd /Users/lending/WhatsAds && npx tsx scripts/test-conversation.ts
+ *   cd /Users/lending/Clickkar && npx tsx scripts/test-conversation.ts
  */
 
 import fs from 'node:fs';
@@ -35,7 +35,7 @@ function loadDotEnv(envPath: string): void {
   }
 }
 
-loadDotEnv(path.resolve('/Users/lending/WhatsAds/.env'));
+loadDotEnv(path.resolve('/Users/lending/Clickkar/.env'));
 
 // ---------------------------------------------------------------------------
 // 2. Imports (after env is set so Prisma picks up DATABASE_URL)

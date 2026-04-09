@@ -32,6 +32,19 @@ export {
   processProductImageV3,
 } from './pipeline/gemini-pipeline-v3.js';
 
+// Never-fail pipeline — production entry point
+export {
+  processImageNeverFail,
+  type NeverFailResult,
+} from './pipeline/never-fail-pipeline.js';
+
+// Fallback tiers (for testing/direct use)
+export {
+  createStyledStudioShot,
+  createCleanStudioShot,
+  createEnhancedOriginal,
+} from './pipeline/styled-studio.js';
+
 // ---------------------------------------------------------------------------
 // Product Analysis
 // ---------------------------------------------------------------------------
@@ -47,18 +60,6 @@ export {
 // ---------------------------------------------------------------------------
 // QA
 // ---------------------------------------------------------------------------
-
-export {
-  assessInputImage,
-  type InputAssessment,
-} from './qa/assess.js';
-
-export {
-  checkOutputQuality,
-  checkOutputWithReference,
-  type OutputAssessment,
-  type ComparativeAssessment,
-} from './qa/output-check.js';
 
 export {
   combinedQualityCheck,

@@ -2,7 +2,7 @@
  * Session state machine — V2 streamlined flow.
  *
  * States: IDLE → SETUP_NAME → SETUP_CATEGORY → SETUP_STYLE →
- *         SETUP_INSTRUCTIONS → AWAITING_PHOTO → AWAITING_PAYMENT →
+ *         AWAITING_PHOTO → AWAITING_PAYMENT →
  *         PROCESSING → DELIVERED → EDIT_PROCESSING
  *
  * Every incoming WhatsApp message passes through handleIncomingMessage(),
@@ -113,9 +113,11 @@ export async function handleIncomingMessage(
           : 0;
 
         if (stuckMinutes > 10) {
+          await transitionTo(phoneNumber, 'IDLE');
+          // Also clear the stale order reference
           await prisma.session.update({
-            where: { id: session.id },
-            data: { state: 'IDLE', stateEnteredAt: new Date() },
+            where: { phoneNumber },
+            data: { currentOrderId: null, imageMediaIds: [], imageStorageUrls: [], earlyPhotoMediaId: null },
           });
           const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
           await wa.sendText(phoneNumber, msgProcessingStuck(lang));
@@ -142,10 +144,7 @@ export async function handleIncomingMessage(
           : 0;
 
         if (editStuckMinutes > 5) {
-          await prisma.session.update({
-            where: { id: session.id },
-            data: { state: 'DELIVERED', stateEnteredAt: new Date() },
-          });
+          await transitionTo(phoneNumber, 'DELIVERED');
           const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
           await wa.sendText(phoneNumber, msgProcessingStuck(lang));
         } else {

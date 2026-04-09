@@ -1,4 +1,4 @@
-# WhatsAds — Photography Angle Guidance System
+# ClickKar — Photography Angle Guidance System
 **Document Version:** 1.0
 **Date:** March 27, 2026
 **Author:** Product (AI-assisted)
@@ -190,7 +190,7 @@ measure in the bowl adds context.
 - Any embroidery, block print, or key design element centered
 
 **Alternatives:** Ghost mannequin (a solid mannequin photographed, mannequin removed in editing
-— this is Stage 3 for WhatsAds, not immediate) or hanger shot. Hanger shot is acceptable —
+— this is Stage 3 for ClickKar, not immediate) or hanger shot. Hanger shot is acceptable —
 hang on a plain wooden or white hanger against a plain light wall, shoot straight-on at eye
 level.
 
@@ -344,7 +344,7 @@ standing up or positioned naturally, not flopped over.
 #### Wallets
 
 **Optimal angle:** Two shots work best. (1) Closed wallet, front face, 45-degree angle. (2) Open
-wallet flat lay from above showing internal compartments. For WhatsAds MVP — the 45-degree
+wallet flat lay from above showing internal compartments. For ClickKar MVP — the 45-degree
 closed shot is the primary.
 
 **What amateurs do wrong:**
@@ -931,7 +931,7 @@ Do NOT use words like "galat" (wrong), "buri" (bad), "problem". Use "aur achha h
 ### 4.4 User-Facing Messages for Angle Detection
 
 **Tone principle:** Never make the user feel rejected or that they did something wrong. Frame
-every correction as "your photo is good, here is how to make it even better." The WhatsAds
+every correction as "your photo is good, here is how to make it even better." The ClickKar
 user base is made up of first-time sellers with limited confidence. A blunt rejection will cause
 immediate churn.
 
