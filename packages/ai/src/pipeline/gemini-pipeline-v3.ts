@@ -3,6 +3,7 @@ import { analyzeAndPlanV3, type AnalyzeAndPlanV3Result } from './product-analyze
 import { geminiGenerateImage, geminiEditImage } from './gemini-generate.js';
 import { verifyAndFixBranding } from './gemini-branding-fix.js';
 import { postProcessFinal, addAILabel, uploadToStorage, downloadBuffer, createStudioShot } from './fallback.js';
+import { createStyledStudioShot } from './styled-studio.js';
 import { combinedQualityCheck } from '../qa/combined-qa.js';
 import { runDeterministicChecks } from '../qa/deterministic-checks.js';
 import { runFocusedChecks } from '../qa/focused-checks.js';
@@ -220,11 +221,11 @@ export async function processProductImageV3(
     console.info(JSON.stringify({ event: 'v3_input_rejected', reason }));
 
     try {
-      const studio = await createStudioShot(params.imageUrl, params.productCategory ?? 'other');
-      let output = await postProcessFinal(studio.studioBuffer, params.style);
+      const styledBuffer = await createStyledStudioShot(rawBuffer, params.imageUrl, params.style ?? 'style_lifestyle', params.productCategory ?? 'other');
+      let output = styledBuffer;
       output = await addAILabel(output);
       const outputUrl = await uploadToStorage(output, `output_${Date.now()}.jpg`);
-      return { outputUrl, qaScore: 0, pipeline: 'composite', attempts: 0, durationMs: Date.now() - totalStart, inputAssessment: { usable: false, productCategory: params.productCategory ?? 'other' }, rejected: true, rejectionReason: reason };
+      return { outputUrl, qaScore: 40, pipeline: 'styled-studio-fallback', attempts: 0, durationMs: Date.now() - totalStart, inputAssessment: { usable: false, productCategory: params.productCategory ?? 'other' }, rejected: true, rejectionReason: reason };
     } catch (studioErr) {
       console.error(JSON.stringify({ event: 'v3_rejection_studio_failed', error: studioErr instanceof Error ? studioErr.message : String(studioErr) }));
       // Last resort: enhanced original with AI label
@@ -247,6 +248,20 @@ export async function processProductImageV3(
   // -----------------------------------------------------------------------
   // STORY-FIRST Generation Prompt
   // -----------------------------------------------------------------------
+
+  function getCameraSpec(style: string): string {
+    const specs: Record<string, string> = {
+      style_clean_white: 'Shot on Hasselblad X2D 100C, 90mm f/3.2, ISO 64. Tethered studio shooting. Razor-sharp focus across entire product. Even, diffused lighting.',
+      style_studio: 'Shot on Hasselblad X2D 100C, 90mm f/3.2, ISO 64. Three-point studio lighting. Hard key light creating defined shadows. Medium aperture for full product sharpness.',
+      style_gradient: 'Shot on Sony A7R V, 50mm f/1.2 wide open, ISO 400. Dramatic dark studio. Rim lights only. Cinematic shallow depth with crisp product focus.',
+      style_lifestyle: 'Shot on Canon EOS R5, 85mm f/1.4L, ISO 100. Natural window light. Extremely shallow depth of field — beautiful creamy bokeh in background. Product sharp, environment dreamy.',
+      style_outdoor: 'Shot on Fujifilm X-T5, 56mm f/1.2, Classic Chrome film simulation. Golden hour natural light. Ultra-shallow DOF — nature melts into warm bokeh. Organic, editorial feel.',
+      style_festive: 'Shot on Canon EOS R5, 85mm f/1.4L, ISO 400. Multiple warm light sources (diyas, fairy lights) creating layered golden bokeh circles at different depths. Warm film-like rendering.',
+      style_minimal: 'Shot on Hasselblad X2D 100C, 120mm f/4, ISO 64. Single hard light source. Clinical sharpness. Architectural precision. The shadow cast is as important as the product.',
+      style_with_model: 'Shot on Canon EOS R5, 85mm f/1.4L, ISO 100. Shallow depth of field. Person and product sharp, background melting into bokeh. Warm, editorial fashion/lifestyle feel.',
+    };
+    return specs[style] ?? specs['style_lifestyle']!;
+  }
 
   function buildGenerationPromptV3(warnings?: string[]): string {
     const warningBlock = warnings?.length
@@ -278,7 +293,7 @@ ${componentsList}
 Preserve ALL visible components from the original photo. If the product has a cap, lid, cover, box, stand, applicator, or any accessory that is visible in the input image, it MUST appear in the generated ad — either attached to the product in its natural position, or placed elegantly beside it. Do NOT remove, hide, or omit any component that is visible in the original photo. A perfume bottle with a cap must show the cap (on the bottle or placed next to it). A jar with a lid must show the lid. A device with a charging cable must show the cable. Every piece that ships with or appears on the product must be represented.
 
 == PRODUCT ACCURACY (CRITICAL) ==
-Product MUST match input photo exactly — same shape, colors, text, logos, material texture. If it has text/logos, they must be legible and correctly spelled. Exactly ONE product — never duplicated.${isSmall ? ' TIGHT macro-style crop — small product DOMINATES the frame.' : ''} Product fills approximately ${fillPct}% of the frame.
+Product MUST match input photo exactly — same shape, colors, text, logos, material texture. If it has text/logos, they must be legible and correctly spelled. Exactly ONE product — never duplicated.${isSmall ? ' TIGHT macro-style crop — small product DOMINATES the frame.' : ''} Product fills approximately ${isLifestyle || isOutdoor ? '35-55' : fillPct}% of the frame${isLifestyle || isOutdoor ? ' — the environment matters as much as the product' : ''}.
 
 == CREATIVE BRIEF (FOLLOW THIS EXACTLY) ==
 ${validPlan.creativeBrief}
@@ -288,6 +303,9 @@ ${validPlan.heroMoment}
 
 == DYNAMIC ELEMENTS (these MUST appear in the image) ==
 ${dynamicList}
+
+== CAMERA & LENS ==
+${getCameraSpec(params.style ?? 'style_lifestyle')}
 
 == PRODUCT MUST LOOK PHOTOGRAPHED, NOT RENDERED ==
 The product must look like a REAL PHYSICAL OBJECT photographed by a camera — NOT a 3D render or CGI.
@@ -303,31 +321,58 @@ ${isFestive ? `== MANDATORY FESTIVE SCENE ==
 - Background: warm golden bokeh with fairy lights at multiple depths
 - Color palette: deep maroon, gold, amber, saffron — NO cool tones
 - This is a Diwali/Indian festival celebration — NOT a gym, office, or modern minimalist setting
+- The scene must feel ABUNDANT and CELEBRATORY — not sparse or minimal
+- Warm golden-amber color temperature throughout (2700-3200K)
+- Multiple light sources at different depths creating layered bokeh
 ` : ''}${isStudio ? `== COLORED STUDIO RULES ==
-- Clean colored backdrop — NOT white, choose a color that complements the product
-- Professional studio lighting setup
-- Minimal or no props — product is the star
-- No outdoor elements, no lifestyle context
+- The backdrop color MUST be a specific, BOLD, SATURATED color — NOT white, NOT grey, NOT beige, NOT pale
+- The color should COMPLEMENT the product: warm products get cool backdrops (teal, navy, sage), cool products get warm backdrops (terracotta, dusty rose, burnt orange)
+- The backdrop color should be stated in the creative brief — follow it exactly
+- Professional three-point studio lighting: key light 45° creating visible shadow on the colored surface
+- The shadow cast by the product on the colored surface IS a compositional element — make it dramatic
+- Maximum 1 small contextual prop related to the product (or none at all)
+- No outdoor elements, no lifestyle context, no room environments
 ` : ''}${isCleanWhite ? `== CLEAN WHITE RULES ==
 - Pure white (#FFFFFF) background — no gradients, no colors
 - Soft, even, shadowless lighting
 - Product floating or on a barely-visible white surface
 - E-commerce style: clean, clinical, professional
 ` : ''}${isLifestyle ? `== LIFESTYLE RULES ==
-- Warm, relatable indoor setting (home, cafe, workspace)
-- Natural window light or warm artificial light
-- Contextual props that match the product's use case
-- Aspirational but not unrealistic
+- Product must exist in a COMPLETE, BELIEVABLE ENVIRONMENT — not floating on a surface
+- Warm, relatable indoor setting: kitchen, cafe table, cozy living room, bathroom vanity, workspace
+- Natural window light or warm artificial light with VISIBLE light source direction
+- 2-3 contextual props that TELL A STORY about how this product is used
+- Shallow depth of field (f/1.4-2.8) — background should have beautiful bokeh blur
+- The scene should look like a real room someone lives in — not a staged studio set
+- The viewer should WANT to be in this space
+` : ''}${isGradient ? `== DARK LUXURY RULES ==
+- Background MUST be pitch black or very dark (near-black) — this is NON-NEGOTIABLE
+- Product on a reflective dark surface (black acrylic, wet obsidian, dark marble) with visible mirror reflection below
+- Rim lighting from behind creating razor-sharp glowing edges on the product
+- Dynamic elements should be BOLD and DRAMATIC — splashes, explosions, particles, mist — not subtle
+- Atmospheric elements: low-lying fog/mist at the base, dust particles caught in light beams
+- The image should feel CINEMATIC and PREMIUM — like a luxury brand campaign
+- THEATRICAL COMPOSITION ALLOWED: extreme contrast, dramatic shadows, bold visual effects
+` : ''}${isOutdoor ? `== OUTDOOR RULES ==
+- MUST be visibly OUTDOORS — real sky, foliage, trees, or natural environment in background
+- Golden hour lighting: warm backlight creating rim glow on product edges
+- Natural surface: weathered wood, sun-warmed stone, moss-covered rock, sandy ground
+- Extreme shallow DOF (f/1.4-2.0) MANDATORY — background melts into golden-green bokeh
+- 1-2 natural foreground elements for depth: wildflower, grass blade, leaf
+- NOT an indoor shot with a plant in the background — genuinely OUTDOORS
+` : ''}${isMinimal ? `== MINIMAL RULES ==
+- 60-70% of frame is INTENTIONAL negative space — the emptiness IS the design
+- Product positioned using rule of thirds (NOT centered)
+- ONE hard directional light source creating a LONG, dramatic shadow across the negative space
+- The shadow is a compositional element — as important as the product itself
+- Surface: white marble, raw concrete, or matte neutral — nothing busy
+- ZERO props. The product, its shadow, and empty space. Nothing else.
+- Cool, architectural, gallery-like atmosphere
 ` : ''}- EDGE TO EDGE — no borders, frames, or decorative edges. Scene extends to all four canvas edges.
 - ZERO text except what is physically ON the product. No watermarks, labels, "AI Generated" text.
 - Square 1:1 format.${params.style !== 'style_with_model' ? `
-- ABSOLUTELY NO PEOPLE. No person, hands, fingers, arms, body parts, mannequin, or silhouette.` : ''}${isGradient ? `
-- THEATRICAL COMPOSITION ALLOWED: Product can be dramatically lit with extreme contrast. Dynamic elements (splashes, explosions, floating particles) should be BOLD and aggressive, not subtle.
-- Product on reflective dark surface with mirror reflection visible below.` : ''}${isOutdoor ? `
-- MUST be visibly OUTDOORS — sky, foliage, or natural environment visible in the background bokeh.
-- Extreme shallow DOF (f/1.4-2.0) is MANDATORY.` : ''}${isMinimal ? `
-- 60-70% of frame is INTENTIONAL negative space. Product can be smaller in frame — the emptiness is the design.` : ''}${!isGradient && !isOutdoor && !isMinimal ? `
-- Product sits naturally on surface — obeys gravity.` : ''}${params.style === 'style_with_model' ? `
+- ABSOLUTELY NO PEOPLE. No person, hands, fingers, arms, body parts, mannequin, or silhouette.` : ''}
+${!isGradient && !isOutdoor && !isMinimal && !isFestive ? `- Product sits naturally on surface — obeys gravity, has natural weight and presence.` : ''}${params.style === 'style_with_model' ? `
 - THIS IMAGE MUST CONTAIN EXACTLY ONE PERSON — this is mandatory, not optional. An image without a person is a FAILURE for this style.
 - HUMAN ANATOMY (CRITICAL):
   - Exactly ONE Indian/South Asian person actively interacting with the product.
@@ -344,6 +389,7 @@ Verify: (1) no borders, (2) no random text, (3) dynamic elements are present and
   let qaResult: Awaited<ReturnType<typeof combinedQualityCheck>> | null = null;
   let lastDeterministic: Awaited<ReturnType<typeof runDeterministicChecks>> | null = null;
   let lastFocused: Awaited<ReturnType<typeof runFocusedChecks>> | null = null;
+  let usedFallback = false;
 
   const retryWarnings: string[] = [];
 
@@ -512,7 +558,10 @@ Verify: (1) no borders, (2) no random text, (3) dynamic elements are present and
         } else if (reason === 'random_text_or_sketch') {
           retryWarnings.push('Previous attempt had random text, watermarks, or "AI Generated" labels. Output must be PURELY photorealistic with ZERO text except on the product itself.');
         } else if (reason.startsWith('anatomy_issue')) {
-          retryWarnings.push(`Previous attempt had a HUMAN ANATOMY ERROR: ${lastFocused.anatomyDescription ?? 'extra or missing limbs'}. The person MUST have exactly 2 arms, 2 legs, 2 hands (5 fingers each), 2 feet. Count every limb carefully. In seated/curled poses, ensure legs are CLEARLY separate and distinguishable.`);
+          if (params.style === 'style_with_model') {
+            retryWarnings.push(`Previous attempt had a HUMAN ANATOMY ERROR: ${lastFocused.anatomyDescription ?? 'extra or missing limbs'}. The person MUST have exactly 2 arms, 2 legs, 2 hands (5 fingers each), 2 feet. Count every limb carefully. In seated/curled poses, ensure legs are CLEARLY separate and distinguishable.`);
+          }
+          // For non-model styles, don't push anatomy warnings — any "people" detected are likely printed imagery on the product
         }
       }
       adBuffer = null;
@@ -592,14 +641,21 @@ Make ONLY this fix. Do not change the overall scene, composition, dynamic elemen
 
   if (!adBuffer) {
     console.warn(JSON.stringify({ event: 'v3_all_attempts_exhausted', totalAttempts }));
+    usedFallback = true;
 
     try {
-      const studio = await createStudioShot(params.imageUrl, validPlan.productCategory, validPlan.recommendedCanvasFill);
-      adBuffer = await postProcessFinal(studio.studioBuffer, params.style);
+      adBuffer = await createStyledStudioShot(rawBuffer, params.imageUrl, params.style ?? 'style_lifestyle', validPlan.productCategory);
       adBuffer = await addAILabel(adBuffer);
-    } catch (err) {
-      console.error(JSON.stringify({ event: 'v3_fallback_failed', error: err instanceof Error ? err.message : String(err) }));
-      adBuffer = await addAILabel(processedBuffer);
+    } catch (styledErr) {
+      console.warn(JSON.stringify({ event: 'v3_styled_fallback_failed', error: styledErr instanceof Error ? styledErr.message : String(styledErr) }));
+      try {
+        const studio = await createStudioShot(params.imageUrl, validPlan.productCategory, validPlan.recommendedCanvasFill);
+        adBuffer = await postProcessFinal(studio.studioBuffer, params.style);
+        adBuffer = await addAILabel(adBuffer);
+      } catch (studioErr) {
+        console.error(JSON.stringify({ event: 'v3_all_fallbacks_failed', error: studioErr instanceof Error ? studioErr.message : String(studioErr) }));
+        adBuffer = await addAILabel(processedBuffer);
+      }
     }
   }
 
@@ -655,8 +711,8 @@ Make ONLY this fix. Do not change the overall scene, composition, dynamic elemen
     outputUrl,
     videoUrl,
     cutoutUrl: undefined,
-    qaScore: qaResult?.score ?? 50,
-    pipeline: 'composite' as const,
+    qaScore: usedFallback ? 45 : (qaResult?.score ?? 50),
+    pipeline: usedFallback ? 'styled-studio-fallback' : ('composite' as const),
     attempts: totalAttempts,
     durationMs: Date.now() - totalStart,
     inputAssessment: { usable: true, productCategory: validPlan.productCategory },
@@ -693,11 +749,16 @@ async function selectBestCandidate(
     const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
       { text: `You are a creative director at a top ad agency. Pick the candidate that would make someone STOP SCROLLING on Instagram and WANT this product.
 
-PRIORITIZE (in order):
+EVALUATE EACH CANDIDATE ON THESE CRITERIA:
 1. SCROLL-STOPPING POWER — Which image is the most visually DRAMATIC and compelling? Bold lighting, dynamic elements (splashes, particles, explosions, scattered ingredients), and creative energy WIN over safe/clean shots.
-2. PRODUCT ACCURACY — Does the product match the original? Branding visible?
-3. PHOTOREALISM — Looks like a real editorial photograph?
-4. NO DEFECTS — No borders, watermarks, text overlays, duplicate products, anatomy errors?
+2. STYLE MATCH — Does the image match the requested style? (e.g., dark luxury should be DARK, outdoor should be genuinely OUTDOORS, lifestyle should feel like a real room)
+3. COMPOSITION — Is it dynamic and interesting? Off-center placement, leading lines, rule of thirds WIN over boring centered product-on-surface.
+4. DYNAMIC ELEMENTS — Are splashes, particles, props, or atmospheric effects present and convincing? More visual drama = better.
+5. LIGHTING & MOOD — Does the lighting create mood and dimension? Dramatic shadows, rim lighting, visible light direction WIN over flat even lighting.
+6. DEPTH — Is there foreground-midground-background separation? Bokeh, atmospheric haze, layered elements create depth.
+7. PRODUCT ACCURACY — Does the product match the original? Branding visible?
+8. PHOTOREALISM — Looks like a real editorial photograph, not a CGI render?
+9. NO DEFECTS — No borders, watermarks, text overlays, duplicate products, anatomy errors?
 
 Between a "safe but clean" image and a "bold but slightly imperfect" image, ALWAYS pick the bolder one if the product is accurate.
 

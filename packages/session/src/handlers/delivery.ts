@@ -53,7 +53,7 @@ export async function sendProcessedImages(
     }
   }
 
-  // Send video ads (Ken Burns) after images
+  // Send video ads BEFORE feedback buttons
   if (videoUrls && videoUrls.length > 0) {
     await sleep(2000);
     for (const vUrl of videoUrls) {
@@ -68,7 +68,7 @@ export async function sendProcessedImages(
   await wa.sendButtons(phoneNumber, msgAskFeedback(language), [
     { id: ButtonIds.FEEDBACK_GREAT, title: language === 'hi' ? 'Bahut badiya!' : 'Love it!' },
     { id: ButtonIds.FEEDBACK_CHANGE, title: language === 'hi' ? 'Kuch badlao' : 'Make a change' },
-    { id: ButtonIds.FEEDBACK_REDO, title: language === 'hi' ? 'Alag karo' : 'Start over' },
+    { id: 'try_new_style', title: language === 'hi' ? 'Naya style' : 'New style' },
   ]);
 }
 
@@ -98,6 +98,18 @@ export async function handleDelivered(
 
         case ButtonIds.FEEDBACK_REDO:
           await handleStartOver(session, user, wa, lang);
+          return;
+
+        case 'try_new_style':
+          // Keep same photo + currentOrderId — style.ts recognizes currentOrderId and reuses the photo
+          await transitionTo(session.phoneNumber, 'SETUP_STYLE', {
+            styleSelection: null,
+            voiceInstructions: null,
+          });
+          {
+            const { sendStyleList } = await import('./onboarding.js');
+            await sendStyleList(session.phoneNumber, lang, wa, user.businessType ?? undefined);
+          }
           return;
 
         case 'reuse_photo':
@@ -142,6 +154,35 @@ export async function handleDelivered(
       const text = message.text.trim();
       logger.info('DELIVERED text received', { text, length: text.length, phoneNumber: session.phoneNumber });
 
+      // Check for greeting/new-order intent first — transition to IDLE
+      // so the returning-user flow handles it naturally on the next message
+      const isGreeting = /^(hi|hello|hey|hii|hiii|namaste|naya|new|start|shuru|hlo|hlw)\s*$/i.test(text);
+      if (isGreeting) {
+        logger.info('Greeting in DELIVERED state, transitioning to IDLE', { text, phoneNumber: session.phoneNumber });
+        try {
+          await transitionTo(session.phoneNumber, 'IDLE');
+          logger.info('Transitioned to IDLE, fetching fresh session', { phoneNumber: session.phoneNumber });
+          const freshSession = await prisma.session.findUnique({ where: { phoneNumber: session.phoneNumber } });
+          logger.info('Fresh session fetched', { found: !!freshSession, phoneNumber: session.phoneNumber, state: freshSession?.state, userName: user.name, lastStyleUsed: user.lastStyleUsed });
+          if (freshSession) {
+            const { handleIdle } = await import('./onboarding.js');
+            logger.info('Calling handleIdle', { phoneNumber: session.phoneNumber });
+            await handleIdle(freshSession, user, message, wa);
+            logger.info('handleIdle completed successfully', { phoneNumber: session.phoneNumber });
+          } else {
+            logger.error('Fresh session not found after IDLE transition', { phoneNumber: session.phoneNumber });
+          }
+        } catch (err) {
+          logger.error('Error in greeting→IDLE→handleIdle path', {
+            phoneNumber: session.phoneNumber,
+            error: err instanceof Error ? err.message : String(err),
+            stack: err instanceof Error ? err.stack?.slice(0, 500) : undefined,
+          });
+          throw err; // re-throw so machine.ts catch sends the error message
+        }
+        return;
+      }
+
       // Short messages without edit keywords → resend feedback buttons
       const hasEditIntent = /background|color|colour|bright|dark|light|zoom|crop|style|change|badlo|roshni|bada|chhota|hatao|lagao|remove|add|make|put|move|resize/i.test(text);
 
@@ -150,7 +191,7 @@ export async function handleDelivered(
         await wa.sendButtons(session.phoneNumber, msgAskFeedback(lang), [
           { id: ButtonIds.FEEDBACK_GREAT, title: lang === 'hi' ? 'Bahut badiya!' : 'Love it!' },
           { id: ButtonIds.FEEDBACK_CHANGE, title: lang === 'hi' ? 'Kuch badlao' : 'Make a change' },
-          { id: ButtonIds.FEEDBACK_REDO, title: lang === 'hi' ? 'Alag karo' : 'Start over' },
+          { id: 'try_new_style', title: lang === 'hi' ? 'Naya style' : 'New style' },
         ]);
         return;
       }
@@ -181,7 +222,7 @@ export async function handleDelivered(
   await wa.sendButtons(session.phoneNumber, msgAskFeedback(lang), [
     { id: ButtonIds.FEEDBACK_GREAT, title: lang === 'hi' ? 'Bahut badiya!' : 'Love it!' },
     { id: ButtonIds.FEEDBACK_CHANGE, title: lang === 'hi' ? 'Kuch badlao' : 'Make a change' },
-    { id: ButtonIds.FEEDBACK_REDO, title: lang === 'hi' ? 'Alag karo' : 'Start over' },
+    { id: 'try_new_style', title: lang === 'hi' ? 'Naya style' : 'New style' },
   ]);
 }
 

@@ -140,9 +140,9 @@ export function msgPaymentConfirmed(lang: Lang): string {
 
 export function msgProcessingStarted(lang: Lang): string {
   if (lang === 'hi') {
-    return 'Ho gaya! ✨ Ab 60 second mein aapki photo aayegi.';
+    return 'Ho gaya! ✨ Ab 1-2 minute mein aapki photo aayegi.';
   }
-  return 'Done! ✨ Your photo will be ready in about 60 seconds.';
+  return 'Done! ✨ Your photo will be ready in about 1-2 minutes.';
 }
 
 export function msgPaymentPending(lang: Lang): string {

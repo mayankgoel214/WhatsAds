@@ -32,6 +32,8 @@ export async function handleIdle(
   const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
   const isReturning = Boolean(user.name);
 
+  logger.info('handleIdle called', { phoneNumber: session.phoneNumber, isReturning, lastStyleUsed: user.lastStyleUsed, lang });
+
   if (isReturning) {
     // --- Returning user with saved style: confirm ---
     if (user.lastStyleUsed) {
@@ -66,38 +68,63 @@ export async function handleIdle(
             currentOrderId: null,
           },
         });
-        await wa.sendButtons(
-          session.phoneNumber,
-          lang === 'hi'
-            ? `Photo mil gayi, ${user.name} ji!\n${styleName} style lagayein?`
-            : `Got your photo, ${user.name}!\nUse ${styleName} style?`,
-          [
-            { id: ButtonIds.SAME_STYLE, title: lang === 'hi' ? 'Haan' : 'Yes' },
-            { id: ButtonIds.NEW_STYLE, title: lang === 'hi' ? 'Naya style' : 'New style' },
-          ],
-        );
+        try {
+          await wa.sendButtons(
+            session.phoneNumber,
+            lang === 'hi'
+              ? `Photo mil gayi, ${user.name} ji!\n${styleName} style lagayein?`
+              : `Got your photo, ${user.name}!\nUse ${styleName} style?`,
+            [
+              { id: ButtonIds.SAME_STYLE, title: lang === 'hi' ? 'Haan' : 'Yes' },
+              { id: ButtonIds.NEW_STYLE, title: lang === 'hi' ? 'Naya style' : 'New style' },
+            ],
+          );
+        } catch (btnErr) {
+          logger.error('sendButtons failed in handleIdle (photo path), falling back to sendText', { phoneNumber: session.phoneNumber, error: String(btnErr) });
+          await wa.sendText(session.phoneNumber, lang === 'hi'
+            ? `Photo mil gayi, ${user.name} ji! Kaunsa style: "${styleName}" ya naya?`
+            : `Got your photo, ${user.name}! Use "${styleName}" style or pick a new one?`);
+        }
         return;
       }
 
       // Text message: show style confirmation
-      await wa.sendButtons(
-        session.phoneNumber,
-        lang === 'hi'
-          ? `${user.name} ji! Photo bhejiye — ${styleName} mein banayenge.\nStyle badlana hai?`
-          : `${user.name}! Send your photo — we'll use ${styleName}.\nWant a different style?`,
-        [
-          { id: ButtonIds.SAME_STYLE, title: lang === 'hi' ? 'Haan, wahi' : 'Yes, same' },
-          { id: ButtonIds.NEW_STYLE, title: lang === 'hi' ? 'Naya style' : 'New style' },
-        ],
-      );
+      logger.info('Sending returning-user style confirmation buttons', { phoneNumber: session.phoneNumber, styleName });
+      try {
+        await wa.sendButtons(
+          session.phoneNumber,
+          lang === 'hi'
+            ? `${user.name} ji! Photo bhejiye — ${styleName} mein banayenge.\nStyle badlana hai?`
+            : `${user.name}! Send your photo — we'll use ${styleName}.\nWant a different style?`,
+          [
+            { id: ButtonIds.SAME_STYLE, title: lang === 'hi' ? 'Haan, wahi' : 'Yes, same' },
+            { id: ButtonIds.NEW_STYLE, title: lang === 'hi' ? 'Naya style' : 'New style' },
+          ],
+        );
+        logger.info('sendButtons succeeded', { phoneNumber: session.phoneNumber });
+      } catch (btnErr) {
+        logger.error('sendButtons failed in handleIdle, falling back to sendText', { phoneNumber: session.phoneNumber, error: String(btnErr) });
+        // Fallback: plain text works when interactive messages fail
+        await wa.sendText(
+          session.phoneNumber,
+          lang === 'hi'
+            ? `Wapas aao, ${user.name} ji! Photo bhejiye, "${styleName}" mein banayenge.`
+            : `Welcome back, ${user.name}! Send your product photo — we'll use "${styleName}".`,
+        );
+      }
       return;
     }
 
     // --- Returning user without saved style: go to style picker ---
-    await wa.sendText(
-      session.phoneNumber,
-      lang === 'hi' ? `Wapas aao, ${user.name} ji!` : `Welcome back, ${user.name}!`,
-    );
+    logger.info('Returning user — no lastStyleUsed, sending style picker', { phoneNumber: session.phoneNumber });
+    try {
+      await wa.sendText(
+        session.phoneNumber,
+        lang === 'hi' ? `Wapas aao, ${user.name} ji!` : `Welcome back, ${user.name}!`,
+      );
+    } catch (txtErr) {
+      logger.error('sendText failed for welcome back message', { phoneNumber: session.phoneNumber, error: String(txtErr) });
+    }
     await transitionTo(session.phoneNumber, 'SETUP_STYLE', {
       imageMediaIds: [],
       imageStorageUrls: [],
@@ -105,20 +132,32 @@ export async function handleIdle(
       voiceInstructions: null,
       currentOrderId: null,
     });
-    await sendStyleList(session.phoneNumber, lang, wa, user.businessType ?? undefined);
+    try {
+      await sendStyleList(session.phoneNumber, lang, wa, user.businessType ?? undefined);
+    } catch (listErr) {
+      logger.error('sendStyleList failed in handleIdle, falling back to sendText', { phoneNumber: session.phoneNumber, error: String(listErr) });
+      await wa.sendText(session.phoneNumber, lang === 'hi'
+        ? 'Kaunsa style chahiye? Clean White, Lifestyle, Gradient, Outdoor, Studio, Festive, Minimal, ya Model ke saath?'
+        : 'Which style? Clean White, Lifestyle, Gradient, Outdoor, Studio, Festive, Minimal, or With Model?');
+    }
     return;
   }
 
   // --- New user: welcome + language picker ---
   await transitionTo(session.phoneNumber, 'SETUP_LANGUAGE');
-  await wa.sendButtons(
-    session.phoneNumber,
-    'Namaste! Welcome to Clickkar.\nKaunsi bhasha? Which language?',
-    [
-      { id: ButtonIds.LANG_HINDI, title: 'Hindi' },
-      { id: ButtonIds.LANG_ENGLISH, title: 'English' },
-    ],
-  );
+  try {
+    await wa.sendButtons(
+      session.phoneNumber,
+      'Namaste! Welcome to Clickkar.\nKaunsi bhasha? Which language?',
+      [
+        { id: ButtonIds.LANG_HINDI, title: 'Hindi' },
+        { id: ButtonIds.LANG_ENGLISH, title: 'English' },
+      ],
+    );
+  } catch (btnErr) {
+    logger.error('sendButtons failed for new user language picker, falling back to sendText', { phoneNumber: session.phoneNumber, error: String(btnErr) });
+    await wa.sendText(session.phoneNumber, 'Namaste! Welcome to Clickkar.\nReply "Hindi" or "English" to continue.');
+  }
 }
 
 // ---------------------------------------------------------------------------

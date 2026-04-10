@@ -31,17 +31,33 @@ interface BackgroundConfig {
 }
 
 const STYLE_BACKGROUNDS: Record<string, BackgroundConfig> = {
-  style_gradient:    { r: 20,  g: 20,  b: 25,  vignetteR: 40,  vignetteG: 35,  vignetteB: 45  },
+  style_gradient:    { r: 20,  g: 20,  b: 25,  vignetteR: 10,  vignetteG: 10,  vignetteB: 15  },
   style_lifestyle:   { r: 245, g: 238, b: 228, vignetteR: 220, vignetteG: 210, vignetteB: 195 },
-  style_outdoor:     { r: 200, g: 210, b: 190, vignetteR: 170, vignetteG: 180, vignetteB: 160 },
-  style_festive:     { r: 90,  g: 20,  b: 20,  vignetteR: 60,  vignetteG: 10,  vignetteB: 15  },
-  style_studio:      { r: 240, g: 240, b: 240, vignetteR: 200, vignetteG: 200, vignetteB: 200 },
+  style_outdoor:     { r: 185, g: 200, b: 170, vignetteR: 150, vignetteG: 170, vignetteB: 140 },
+  style_festive:     { r: 120, g: 25,  b: 25,  vignetteR: 80,  vignetteG: 15,  vignetteB: 15  },
   style_clean_white: { r: 255, g: 255, b: 255 },
-  style_minimal:     { r: 245, g: 245, b: 240, vignetteR: 225, vignetteG: 225, vignetteB: 220 },
+  style_minimal:     { r: 250, g: 248, b: 245, vignetteR: 230, vignetteG: 228, vignetteB: 225 },
   style_model:       { r: 235, g: 230, b: 225, vignetteR: 200, vignetteG: 195, vignetteB: 185 },
 };
 
+// Studio gets RANDOMIZED bold colors — never the same boring grey
+const STUDIO_COLOR_POOL: BackgroundConfig[] = [
+  { r: 0,   g: 120, b: 130, vignetteR: 0,   vignetteG: 90,  vignetteB: 100 },  // Deep teal
+  { r: 200, g: 100, b: 80,  vignetteR: 170, vignetteG: 75,  vignetteB: 60  },  // Warm terracotta
+  { r: 180, g: 140, b: 155, vignetteR: 150, vignetteG: 110, vignetteB: 125 },  // Dusty rose
+  { r: 25,  g: 40,  b: 80,  vignetteR: 15,  vignetteG: 25,  vignetteB: 60  },  // Deep navy
+  { r: 80,  g: 110, b: 80,  vignetteR: 55,  vignetteG: 85,  vignetteB: 55  },  // Forest/sage green
+  { r: 100, g: 45,  b: 55,  vignetteR: 70,  vignetteG: 30,  vignetteB: 40  },  // Rich burgundy
+  { r: 195, g: 165, b: 110, vignetteR: 165, vignetteG: 135, vignetteB: 85  },  // Warm sand/mustard
+  { r: 60,  g: 50,  b: 80,  vignetteR: 40,  vignetteG: 35,  vignetteB: 60  },  // Royal purple
+];
+
 function getBackgroundConfig(style: string): BackgroundConfig {
+  if (style === 'style_studio') {
+    // Random selection from the color pool
+    const idx = Math.floor(Math.random() * STUDIO_COLOR_POOL.length);
+    return STUDIO_COLOR_POOL[idx]!;
+  }
   return STYLE_BACKGROUNDS[style] ?? { r: 240, g: 240, b: 240 };
 }
 

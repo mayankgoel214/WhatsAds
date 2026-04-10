@@ -269,6 +269,18 @@ export async function handleAwaitingPhoto(
   }
 
   // ---- No photos yet and non-image message ----
+  // Don't confuse users with error messages right after entering this state
+  // (can be triggered by delayed/racing messages from previous state)
+  const stateAge = Date.now() - new Date(session.stateEnteredAt ?? session.updatedAt).getTime();
+  if (stateAge < 10_000) {
+    logger.info(JSON.stringify({
+      event: 'suppressed_unknown_message',
+      phoneNumber: session.phoneNumber,
+      messageType: message.messageType,
+      stateAgeMs: stateAge,
+    }));
+    return;
+  }
   await wa.sendText(phoneNumber, msgUnknownMessage(lang));
 }
 

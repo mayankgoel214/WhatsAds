@@ -180,28 +180,28 @@ export async function processImageJob(job: Job): Promise<void> {
           phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
         });
 
-        // Collect video URLs from completed jobs
-        const videoUrls = allJobs
-          .filter((j: ImageJob) => j.status === 'completed')
-          .map(() => videoUrl) // videoUrl from current job — TODO: store per-job videoUrl
-          .filter(Boolean) as string[];
-
+        // Deliver only the current job's output (not all historical outputs for this order)
+        // completedUrls above is used for the order record only
         await sendProcessedImages(
           data.phoneNumber,
-          completedUrls,
+          [outputUrl],
           (user?.language as 'hi' | 'en') || 'hi',
           user?.name ?? undefined,
           wa,
-          videoUrls,
+          videoUrl ? [videoUrl] : [],
         );
 
-        // Transition session PROCESSING → DELIVERED
+        // Transition session to DELIVERED from either PROCESSING or EDIT_PROCESSING
         if (user) {
-          await prisma.session.updateMany({
-            where: { userId: user.id, state: 'PROCESSING' },
+          const sessionUpdate = await prisma.session.updateMany({
+            where: { userId: user.id, state: { in: ['PROCESSING', 'EDIT_PROCESSING'] } },
             data: { state: 'DELIVERED', stateEnteredAt: new Date() },
           });
-          log('Session transitioned to DELIVERED');
+          if (sessionUpdate.count > 0) {
+            log('Session transitioned to DELIVERED');
+          } else {
+            log('Session transition skipped — already in correct state or not found');
+          }
         }
 
         await job.updateProgress(100);

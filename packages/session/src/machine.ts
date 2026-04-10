@@ -107,6 +107,23 @@ export async function handleIncomingMessage(
         break;
 
       case 'PROCESSING': {
+        // Escape hatch — user wants to start fresh
+        if (isEscapeIntent(message)) {
+          logger.info('Escape intent in PROCESSING — resetting to IDLE', { phoneNumber });
+          await transitionTo(phoneNumber, 'IDLE', {
+            currentOrderId: null,
+            imageMediaIds: [],
+            imageStorageUrls: [],
+          });
+          await prisma.session.update({
+            where: { phoneNumber },
+            data: { earlyPhotoMediaId: null },
+          });
+          const freshSession = await getSession(phoneNumber);
+          if (freshSession) await handleIdle(freshSession, user, message, wa);
+          break;
+        }
+
         // Auto-recovery: if stuck for >10 minutes, reset to IDLE
         const stuckMinutes = session.stateEnteredAt
           ? (Date.now() - new Date(session.stateEnteredAt).getTime()) / 60_000
@@ -114,7 +131,6 @@ export async function handleIncomingMessage(
 
         if (stuckMinutes > 10) {
           await transitionTo(phoneNumber, 'IDLE');
-          // Also clear the stale order reference
           await prisma.session.update({
             where: { phoneNumber },
             data: { currentOrderId: null, imageMediaIds: [], imageStorageUrls: [], earlyPhotoMediaId: null },
@@ -138,6 +154,19 @@ export async function handleIncomingMessage(
         break;
 
       case 'EDIT_PROCESSING': {
+        // Escape hatch — user wants to start fresh
+        if (isEscapeIntent(message)) {
+          logger.info('Escape intent in EDIT_PROCESSING — resetting to IDLE', { phoneNumber });
+          await transitionTo(phoneNumber, 'IDLE', {
+            currentOrderId: null,
+            imageMediaIds: [],
+            imageStorageUrls: [],
+          });
+          const freshSession = await getSession(phoneNumber);
+          if (freshSession) await handleIdle(freshSession, user, message, wa);
+          break;
+        }
+
         // Auto-recovery: if stuck for >5 minutes, reset to DELIVERED and notify user
         const editStuckMinutes = session.stateEnteredAt
           ? (Date.now() - new Date(session.stateEnteredAt).getTime()) / 60_000
@@ -172,4 +201,14 @@ export async function handleIncomingMessage(
       logger.error('Failed to send error message', { phoneNumber });
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Escape intent detection — lets users break out of stuck states
+// ---------------------------------------------------------------------------
+
+function isEscapeIntent(message: MessageContext): boolean {
+  if (message.messageType !== 'text' || !message.text) return false;
+  const text = message.text.trim().toLowerCase();
+  return /^(hi|hello|hey|hii|hiii|namaste|naya|new|start|shuru|hlo|hlw|cancel|stop|reset|restart|start over|naya karo|band karo)\s*$/.test(text);
 }

@@ -50,7 +50,22 @@ export async function handleSetupStyle(
     }
   }
 
+  // Fallback: buttonReplyId might contain a style ID (some WhatsApp clients send list selections as button replies)
+  if (!styleId && message.buttonReplyId) {
+    if (VALID_STYLE_IDS.has(message.buttonReplyId)) {
+      styleId = message.buttonReplyId;
+    }
+  }
+
   if (!styleId) {
+    console.warn(JSON.stringify({
+      event: 'style_resolution_failed',
+      phoneNumber: session.phoneNumber,
+      messageType: message.messageType,
+      listReplyId: message.listReplyId,
+      buttonReplyId: message.buttonReplyId,
+      text: message.text,
+    }));
     const { sendStyleList } = await import('./onboarding.js');
     await sendStyleList(phoneNumber, lang, wa, user.businessType ?? undefined);
     return;
@@ -125,8 +140,8 @@ export async function handleSetupStyle(
   });
 
   const isFirstOrder = (user.orderCount ?? 0) === 0;
-  await wa.sendText(phoneNumber, `*${styleName}* set!`);
-  await wa.sendText(phoneNumber, msgSendPhoto(lang, isFirstOrder));
+  const photoPrompt = msgSendPhoto(lang, isFirstOrder);
+  await wa.sendText(phoneNumber, `*${styleName}* set!\n\n${photoPrompt}`);
 
   logger.info('Style selected, awaiting photo', { phoneNumber, styleId });
 }

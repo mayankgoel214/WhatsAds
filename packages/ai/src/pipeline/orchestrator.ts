@@ -23,7 +23,7 @@ export interface ProcessImageResult {
   cutoutUrl?: string;
   studioShotUrl?: string;
   qaScore: number;
-  pipeline: 'composite';
+  pipeline: 'composite' | 'styled-studio-fallback';
   attempts: number;
   durationMs: number;
   inputAssessment?: { usable: boolean; productCategory: string };

@@ -69,12 +69,8 @@ export async function createOrderAndSendPayment(params: CreateOrderParams): Prom
     },
   });
 
-  // Send payment message
   const totalRs = amount / 100;
-  await wa.sendText(
-    phoneNumber,
-    msgPhotoReceivedWithPayment(lang, user.name ?? '', imageCount, styleName, totalRs),
-  );
+  const confirmationMsg = msgPhotoReceivedWithPayment(lang, user.name ?? '', imageCount, styleName, totalRs);
 
   if (isFreeOrder) {
     // Free order — skip payment, set to processing BEFORE enqueuing
@@ -89,12 +85,15 @@ export async function createOrderAndSendPayment(params: CreateOrderParams): Prom
       styleSelection: styleId,
     });
 
-    await wa.sendText(phoneNumber, msgProcessingStarted(lang));
+    const processingMsg = msgProcessingStarted(lang);
+    await wa.sendText(phoneNumber, `${confirmationMsg}\n\n${processingMsg}`);
 
     // Enqueue image jobs (order already in 'processing' state)
     await enqueueImageJobs(order.id, phoneNumber, imageStorageUrls, styleId, voiceInstructions, user.businessType ?? undefined);
   } else {
-    // Paid order — create payment link
+    // Paid order — send confirmation, then create payment link
+    await wa.sendText(phoneNumber, confirmationMsg);
+
     const updatedSession = await transitionTo(phoneNumber, 'AWAITING_PAYMENT', {
       currentOrderId: order.id,
       styleSelection: styleId,

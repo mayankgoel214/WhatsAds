@@ -140,6 +140,12 @@ export async function whatsappWebhookRoutes(app: FastifyInstance): Promise<void>
         ? (rawType as typeof validTypes[number])
         : 'unknown';
 
+      // Skip unsupported message types (reactions, stickers, system messages, etc.)
+      if (!messageType || messageType === 'unknown') {
+        app.log.debug('Ignoring unsupported message type: %s', rawType);
+        return;
+      }
+
       // Build message context — access message fields via any cast since
       // the WhatsApp types use a union but we know the shape by type check
       const msg = message as any;
