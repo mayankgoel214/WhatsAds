@@ -292,8 +292,18 @@ ${warningBlock}
 ${componentsList}
 Preserve ALL visible components from the original photo. If the product has a cap, lid, cover, box, stand, applicator, or any accessory that is visible in the input image, it MUST appear in the generated ad — either attached to the product in its natural position, or placed elegantly beside it. Do NOT remove, hide, or omit any component that is visible in the original photo. A perfume bottle with a cap must show the cap (on the bottle or placed next to it). A jar with a lid must show the lid. A device with a charging cable must show the cable. Every piece that ships with or appears on the product must be represented.
 
-== PRODUCT ACCURACY (CRITICAL) ==
-Product MUST match input photo exactly — same shape, colors, text, logos, material texture. If it has text/logos, they must be legible and correctly spelled. Exactly ONE product — never duplicated.${isSmall ? ' TIGHT macro-style crop — small product DOMINATES the frame.' : ''} Product fills approximately ${isLifestyle || isOutdoor ? '35-55' : fillPct}% of the frame${isLifestyle || isOutdoor ? ' — the environment matters as much as the product' : ''}.
+== PRODUCT ACCURACY (ABSOLUTE HIGHEST PRIORITY — ABOVE ALL ELSE) ==
+The product in the output MUST be a PIXEL-PERFECT photographic match to the input. This is MORE important than creative brief, dynamic elements, or scene quality.
+- SHAPE & PROPORTIONS: Every dimension, curve, angle, and ratio must match the input EXACTLY. If the product is a necklace with earrings, EACH piece must maintain its exact shape and proportional relationship.
+- COLORS & MATERIALS: Exact same colors, metallic sheen, transparency, and material texture. Gold must stay gold (warm). Silver must stay silver. Gemstones must be the same color and cut.
+- TEXT & LOGOS: All text, logos, brand marks must be legible, correctly spelled, and in the correct position.
+- COMPONENTS: If the input shows a SET of items (necklace + earrings, bottle + cap, phone + case), ALL pieces must appear with their EXACT original design. Do NOT simplify, merge, or redesign any component.
+- COUNT: Exactly ONE instance of the product (or one set if it's a set). Never duplicate.
+- DETAIL PRESERVATION: Fine details like individual stones in jewellery, stitching on fabric, circuit patterns on electronics — these MUST be preserved. Do NOT smooth out or simplify intricate details.
+${isSmall ? '- TIGHT macro-style crop — small product DOMINATES the frame.' : ''}
+Product fills approximately ${isLifestyle || isOutdoor ? '35-55' : fillPct}% of the frame${isLifestyle || isOutdoor ? ' — the environment matters as much as the product' : ''}.
+
+IF THERE IS ANY CONFLICT between the creative brief and product accuracy, PRODUCT ACCURACY WINS. A boring image of the correct product is infinitely better than a stunning image of the wrong product.
 
 == CREATIVE BRIEF (FOLLOW THIS EXACTLY) ==
 ${validPlan.creativeBrief}
@@ -301,8 +311,12 @@ ${validPlan.creativeBrief}
 == HERO MOMENT ==
 ${validPlan.heroMoment}
 
-== DYNAMIC ELEMENTS (these MUST appear in the image) ==
+== DYNAMIC ELEMENTS (add these but NEVER let them obscure or distort the product) ==
 ${dynamicList}
+Dynamic elements should ENHANCE the product, not compete with it. They must:
+- Stay BEHIND or TO THE SIDE of the product — never covering or overlapping the product
+- Be physically plausible for the scene
+- If the product has fine details (jewellery, electronics, text), REDUCE dynamic elements to avoid visual interference
 
 == CAMERA & LENS ==
 ${getCameraSpec(params.style ?? 'style_lifestyle')}
@@ -531,11 +545,12 @@ Verify: (1) no borders, (2) no random text, (3) dynamic elements are present and
     }
 
     // ------- POST-PROCESS + AI LABEL -------
+    // Post-processing is applied BEFORE QA checks so focused checks evaluate the final output.
     adBuffer = await postProcessFinal(adBuffer, params.style);
     adBuffer = await addAILabel(adBuffer);
 
     // ------- LAYER 1: Focused AI Binary Checks (~2s) -------
-    lastFocused = await runFocusedChecks(adBuffer, productName);
+    lastFocused = await runFocusedChecks(processedBuffer, adBuffer, productName);
 
     console.info(JSON.stringify({
       event: 'v3_layer1_complete',
@@ -545,6 +560,8 @@ Verify: (1) no borders, (2) no random text, (3) dynamic elements are present and
       hasRandomTextOrSketch: lastFocused.hasRandomTextOrSketch,
       hasAnatomyIssue: lastFocused.hasAnatomyIssue,
       anatomyDescription: lastFocused.anatomyDescription,
+      hasComponentIssue: lastFocused.hasComponentIssue,
+      componentDescription: lastFocused.componentDescription,
     }));
 
     if (!lastFocused.pass) {
@@ -562,6 +579,8 @@ Verify: (1) no borders, (2) no random text, (3) dynamic elements are present and
             retryWarnings.push(`Previous attempt had a HUMAN ANATOMY ERROR: ${lastFocused.anatomyDescription ?? 'extra or missing limbs'}. The person MUST have exactly 2 arms, 2 legs, 2 hands (5 fingers each), 2 feet. Count every limb carefully. In seated/curled poses, ensure legs are CLEARLY separate and distinguishable.`);
           }
           // For non-model styles, don't push anatomy warnings — any "people" detected are likely printed imagery on the product
+        } else if (reason.startsWith('component_accuracy')) {
+          retryWarnings.push(`Previous attempt was MISSING or ALTERED product components: ${lastFocused.componentDescription}. ALL pieces from the original product photo must be present with their EXACT original design — same shape, proportions, and style.`);
         }
       }
       adBuffer = null;
@@ -618,7 +637,7 @@ Make ONLY this fix. Do not change the overall scene, composition, dynamic elemen
           break;
         }
 
-        const recheckFocused = await runFocusedChecks(adBuffer, productName);
+        const recheckFocused = await runFocusedChecks(processedBuffer, adBuffer, productName);
         if (!recheckFocused.pass) {
           adBuffer = preEditBuffer;
           break;
@@ -749,18 +768,19 @@ async function selectBestCandidate(
     const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
       { text: `You are a creative director at a top ad agency. Pick the candidate that would make someone STOP SCROLLING on Instagram and WANT this product.
 
-EVALUATE EACH CANDIDATE ON THESE CRITERIA:
-1. SCROLL-STOPPING POWER — Which image is the most visually DRAMATIC and compelling? Bold lighting, dynamic elements (splashes, particles, explosions, scattered ingredients), and creative energy WIN over safe/clean shots.
-2. STYLE MATCH — Does the image match the requested style? (e.g., dark luxury should be DARK, outdoor should be genuinely OUTDOORS, lifestyle should feel like a real room)
-3. COMPOSITION — Is it dynamic and interesting? Off-center placement, leading lines, rule of thirds WIN over boring centered product-on-surface.
-4. DYNAMIC ELEMENTS — Are splashes, particles, props, or atmospheric effects present and convincing? More visual drama = better.
-5. LIGHTING & MOOD — Does the lighting create mood and dimension? Dramatic shadows, rim lighting, visible light direction WIN over flat even lighting.
-6. DEPTH — Is there foreground-midground-background separation? Bokeh, atmospheric haze, layered elements create depth.
-7. PRODUCT ACCURACY — Does the product match the original? Branding visible?
-8. PHOTOREALISM — Looks like a real editorial photograph, not a CGI render?
-9. NO DEFECTS — No borders, watermarks, text overlays, duplicate products, anatomy errors?
+EVALUATE EACH CANDIDATE ON THESE CRITERIA (IN ORDER OF IMPORTANCE):
 
-Between a "safe but clean" image and a "bold but slightly imperfect" image, ALWAYS pick the bolder one if the product is accurate.
+1. PRODUCT ACCURACY (MOST IMPORTANT — DEALBREAKER) — Does the product match the original photo EXACTLY? Same shape, proportions, colors, components, details. If any candidate distorts the product (wrong shape, missing components, altered proportions, simplified details), it is AUTOMATICALLY ELIMINATED regardless of how beautiful the image is. A candidate with a perfect product in a simple scene BEATS a candidate with a distorted product in a stunning scene.
+2. STYLE MATCH — Does the image match the requested style? (e.g., dark luxury should be DARK, outdoor should be genuinely OUTDOORS)
+3. SCROLL-STOPPING POWER — Which remaining candidate is the most visually compelling? Bold lighting, dynamic elements, creative energy.
+4. COMPOSITION — Dynamic, interesting composition? Off-center placement, rule of thirds.
+5. DYNAMIC ELEMENTS — Are splashes, particles, props present and convincing?
+6. LIGHTING & MOOD — Does the lighting create mood and dimension?
+7. DEPTH — Foreground-midground-background separation?
+8. PHOTOREALISM — Looks like a real photograph, not CGI?
+9. NO DEFECTS — No borders, watermarks, text overlays, duplicate products?
+
+CRITICAL: Product accuracy is NON-NEGOTIABLE. If only one candidate has the product right, pick that one even if it's less dramatic.
 
 Reply with ONLY the letter: ${candidates.map((_, i) => String.fromCharCode(65 + i)).join(', ')}.` },
       { inlineData: { mimeType: inputMime, data: inputBase64 } },

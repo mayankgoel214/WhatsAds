@@ -299,7 +299,7 @@ Before finalizing: verify no surface looks plastic or unnaturally smooth, shadow
     // ------- LAYER 1: Focused AI Binary Checks (~2s) -------
     console.info(JSON.stringify({ event: 'v2_layer1_start', attempt: attempt + 1 }));
 
-    lastFocused = await runFocusedChecks(adBuffer, productName);
+    lastFocused = await runFocusedChecks(processedBuffer, adBuffer, productName);
 
     console.info(JSON.stringify({
       event: 'v2_layer1_complete',
@@ -378,7 +378,7 @@ Make ONLY this fix. Do not change the overall scene, composition, lighting, or s
         }
 
         // Re-run Layer 1 on fixed image
-        const recheckFocused = await runFocusedChecks(adBuffer, productName);
+        const recheckFocused = await runFocusedChecks(processedBuffer, adBuffer, productName);
         if (!recheckFocused.pass) {
           console.warn(JSON.stringify({ event: 'v2_edit_broke_focused', failReasons: recheckFocused.failReasons }));
           adBuffer = preEditBuffer; // revert to pre-edit version

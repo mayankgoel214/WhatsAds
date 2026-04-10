@@ -507,6 +507,7 @@ If this product is a cold beverage (isColdBeverage = true), ALL of the following
 - The emotional trigger MUST be "energy", "freshness", "excitement", or "power" — NEVER "warmth", "comfort", or "serenity"
 
 ## RULES FOR THE CREATIVE BRIEF:
+CRITICAL CONSTRAINT FOR CREATIVE BRIEF: The creative brief must NEVER describe the product differently from how it appears in the input photo. Do not invent details, simplify the product, or change its design. The brief should describe the SCENE and ENVIRONMENT around the product, not redesign the product itself. Every physical detail of the product (shape, color, material, components, text) must remain exactly as photographed.
 - EXACTLY ONE product in the image — NEVER duplicate or clone
 - Product is the HERO — fills the recommended canvas percentage
 - Product MUST obey gravity (lies flat, leans, or stands on base)

@@ -11,6 +11,8 @@ export interface FocusedCheckResult {
   hasRandomTextOrSketch: boolean;
   hasAnatomyIssue: boolean;
   anatomyDescription: string | null;
+  hasComponentIssue: boolean;
+  componentDescription: string;
   pass: boolean;
   failReasons: string[];
 }
@@ -161,15 +163,78 @@ Reply YES or NO only.`;
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function detectMime(buf: Buffer): 'image/jpeg' | 'image/png' | 'image/webp' {
+  if (buf[0] === 0x89 && buf[1] === 0x50) return 'image/png';
+  if (buf[0] === 0x52 && buf[1] === 0x49) return 'image/webp';
+  return 'image/jpeg';
+}
+
+// ---------------------------------------------------------------------------
+// Check 5: Product component accuracy
+// ---------------------------------------------------------------------------
+
+async function checkComponentAccuracy(
+  inputBuffer: Buffer,
+  outputBuffer: Buffer,
+): Promise<{ allComponentsPresent: boolean; missingComponents: string }> {
+  try {
+    const genai = getClient();
+    const inputBase64 = inputBuffer.toString('base64');
+    const inputMime = detectMime(inputBuffer);
+    const outputBase64 = outputBuffer.toString('base64');
+    const outputMime = detectMime(outputBuffer);
+
+    const response = await Promise.race([
+      genai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: [{
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType: inputMime, data: inputBase64 } },
+            { inlineData: { mimeType: outputMime, data: outputBase64 } },
+            { text: `Image 1 is the ORIGINAL product photo. Image 2 is the AI-generated ad.
+
+Compare the product in both images:
+1. Count ALL visible components/pieces in Image 1 (e.g., necklace + 2 earrings = 3 pieces, bottle + cap = 2 pieces, single item = 1 piece)
+2. Count ALL visible components/pieces in Image 2
+3. Check if EACH component in Image 1 has a matching component in Image 2 with similar shape and proportions
+
+Answer in JSON:
+{"allComponentsPresent": boolean, "missingComponents": "description of what's missing or distorted, or 'none'"}
+
+Be strict: if an earring's shape changed from elongated drop to compact stud, that counts as a missing/wrong component.` }
+          ],
+        }],
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), TIMEOUT_MS)),
+    ]);
+
+    const text = response.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    const parsed = JSON.parse(cleaned);
+    return {
+      allComponentsPresent: parsed.allComponentsPresent ?? true,
+      missingComponents: parsed.missingComponents ?? 'none',
+    };
+  } catch {
+    return { allComponentsPresent: true, missingComponents: 'check failed' }; // default pass on failure
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main export
 // ---------------------------------------------------------------------------
 
 /**
  * Layer 1: Focused AI binary questions.
- * Fires 3 independent Gemini calls in parallel (~2s wall clock).
+ * Fires 5 independent Gemini calls in parallel (~2s wall clock).
  * Each asks ONE specific yes/no question — far more reliable than omnibus scoring.
  */
 export async function runFocusedChecks(
+  inputBuffer: Buffer,
   outputBuffer: Buffer,
   productName: string,
 ): Promise<FocusedCheckResult> {
@@ -182,13 +247,15 @@ export async function runFocusedChecks(
     hasRandomTextOrSketch: false,
     hasAnatomyIssue: false,
     anatomyDescription: null,
+    hasComponentIssue: false,
+    componentDescription: 'none',
     pass: true,
     failReasons: [],
   };
 
-  // Fire all 4 checks in parallel with timeout
+  // Fire all 5 checks in parallel with timeout
   // CRITICAL: timeout defaults to FAIL (not pass) to prevent bad images slipping through
-  const [countResult, defectResult, textResult, anatomyResult] = await Promise.all([
+  const [countResult, defectResult, textResult, anatomyResult, componentResult] = await Promise.all([
     withTimeout(
       checkProductCount(client, outputBuffer, productName),
       TIMEOUT_MS,
@@ -209,6 +276,11 @@ export async function runFocusedChecks(
       TIMEOUT_MS,
       { hasIssue: false, description: null, raw: 'timeout' }, // anatomy timeout = pass (most images don't have people)
     ),
+    withTimeout(
+      checkComponentAccuracy(inputBuffer, outputBuffer),
+      TIMEOUT_MS,
+      { allComponentsPresent: true, missingComponents: 'check failed' }, // default pass on timeout
+    ),
   ]);
 
   result.productCount = countResult.count;
@@ -217,6 +289,8 @@ export async function runFocusedChecks(
   result.hasRandomTextOrSketch = textResult.hasIssue;
   result.hasAnatomyIssue = anatomyResult.hasIssue;
   result.anatomyDescription = anatomyResult.description;
+  result.hasComponentIssue = !componentResult.allComponentsPresent;
+  result.componentDescription = componentResult.missingComponents;
 
   console.info(JSON.stringify({
     event: 'focused_checks_complete',
@@ -227,6 +301,8 @@ export async function runFocusedChecks(
     hasRandomTextOrSketch: textResult.hasIssue,
     hasAnatomyIssue: anatomyResult.hasIssue,
     anatomyDescription: anatomyResult.description,
+    hasComponentIssue: result.hasComponentIssue,
+    componentDescription: result.componentDescription,
   }));
 
   // Evaluate pass/fail
@@ -254,6 +330,11 @@ export async function runFocusedChecks(
   if (anatomyResult.hasIssue) {
     result.pass = false;
     result.failReasons.push(`anatomy_issue:${anatomyResult.description ?? 'unknown'}`);
+  }
+
+  if (!componentResult.allComponentsPresent) {
+    result.pass = false;
+    result.failReasons.push(`component_accuracy:${componentResult.missingComponents}`);
   }
 
   return result;

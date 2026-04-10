@@ -63,13 +63,22 @@ EXCEPTION: Photos/artwork of people PRINTED ON the product surface (photo mugs, 
 ## 2. SKETCHES/DRAWINGS CHECK (auto-fail if found)
 - Any line drawings, sketches, illustrations, or cartoon elements? = INSTANT FAIL
 
-## 3. PRODUCT FIDELITY (0-35 points, MOST IMPORTANT)
-- Does the product in Image 2 match the product in Image 1?
-- 35: Identical — same shape, color, texture, brand text, logos
-- 25: Minor shift — same product, slight color/texture change, brand text preserved
-- 15: Altered — shape similar but material or color changed, OR brand text slightly different
-- 5: Significantly altered — different shape/material/proportions
-- 0: Regenerated — brand name/logo MISSING, CHANGED, or REPLACED
+## 3. PRODUCT FIDELITY (0-35 points, MOST IMPORTANT — scrutinize carefully)
+Compare the product in Image 2 to the product in Image 1 with EXTREME attention to detail:
+- SHAPE ACCURACY: Are ALL proportions, curves, angles, and dimensions identical? For multi-piece items (jewellery sets, product bundles), does EACH piece match?
+- COLOR ACCURACY: Are colors exactly the same? Gold should be gold (not grey). Blue sapphires should be the same blue. Material finish (matte/glossy/metallic) must match.
+- COMPONENT ACCURACY: If the input shows multiple pieces (necklace + earrings, bottle + cap), are ALL pieces present with their EXACT original design? Missing or redesigned components = major penalty.
+- DETAIL ACCURACY: Fine details like individual stones, stitching, patterns, textures — are they preserved or smoothed out?
+- TEXT/LOGO ACCURACY: All brand text, logos must be legible and correctly spelled.
+
+Scoring:
+- 35: IDENTICAL — Every detail matches. Components, proportions, colors, textures are perfect.
+- 28-34: NEAR IDENTICAL — Product is correct with only imperceptible differences (very slight color shift from lighting).
+- 20-27: MINOR ISSUES — Product is recognizably the same but has noticeable differences (slightly wrong proportions, one component slightly altered).
+- 10-19: ALTERED — Product has clear differences from original (wrong proportions, missing fine details, color changes, simplified design).
+- 0-9: REGENERATED — Product looks like a DIFFERENT product. Major shape/proportion/color changes, missing components, or brand elements missing.
+
+BE HARSH HERE. Most AI outputs will have SOME fidelity issues — score them honestly. A slightly altered product that a seller would REJECT is not 25+.
 
 ## 4. SCENE QUALITY (0-30 points)
 - Is the scene photorealistic with proper lighting, shadows, reflections?

@@ -102,9 +102,29 @@ export async function handleIncomingMessage(
         await handleAwaitingPhoto(session, user, message, wa);
         break;
 
-      case 'AWAITING_PAYMENT':
+      case 'AWAITING_PAYMENT': {
+        // Escape hatch — let users abandon payment and restart
+        if (isEscapeIntent(message)) {
+          logger.info('Escape intent in AWAITING_PAYMENT — resetting to IDLE', { phoneNumber });
+          await transitionTo(phoneNumber, 'IDLE', {
+            currentOrderId: null,
+            styleSelection: null,
+            voiceInstructions: null,
+            imageMediaIds: [],
+            imageStorageUrls: [],
+          });
+          await prisma.session.update({
+            where: { phoneNumber },
+            data: { earlyPhotoMediaId: null },
+          });
+          const freshSession = await getSession(phoneNumber);
+          if (freshSession) await handleIdle(freshSession, user, message, wa);
+          break;
+        }
+
         await handleAwaitingPayment(session, user, message, wa);
         break;
+      }
 
       case 'PROCESSING': {
         // Escape hatch — user wants to start fresh
