@@ -1263,6 +1263,7 @@ export async function createBriaFallbackShot(
   imageUrl: string,
   style: string,
   productCategory: string,
+  voiceInstructions?: string,
 ): Promise<Buffer> {
   const startMs = Date.now();
   console.info(JSON.stringify({ event: 'bria_fallback_start', style, productCategory }));
@@ -1274,7 +1275,10 @@ export async function createBriaFallbackShot(
   const studioUrl = await uploadToStorage(studioBuffer, `bria_input_${Date.now()}.jpg`);
 
   // 3. Generate a style-appropriate scene prompt
-  const scenePrompt = getBriaScenePrompt(style, productCategory);
+  let scenePrompt = getBriaScenePrompt(style, productCategory);
+  if (voiceInstructions) {
+    scenePrompt += `. User requested: ${voiceInstructions.slice(0, 200)}`;
+  }
 
   // 4. Call Bria Product Shot via fal.ai
   ensureFalConfig();

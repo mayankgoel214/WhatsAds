@@ -185,9 +185,17 @@ export async function processImageJob(job: Job): Promise<void> {
       );
 
       if (allComplete) {
-        const completedUrls = allJobs
-          .filter((j: ImageJob) => j.status === 'completed' && j.outputImageUrl)
-          .map((j: ImageJob) => j.outputImageUrl!);
+        const completedJobs = allJobs.filter(
+          (j: ImageJob) => j.status === 'completed' && j.outputImageUrl,
+        );
+        const completedUrls = completedJobs.map((j: ImageJob) => j.outputImageUrl!);
+
+        // For multi-photo orders, use the current job's video/story (if available).
+        // ImageJob records do not store videoUrl/storyUrl fields, so reading them
+        // from other job rows always yields undefined. The last-completing job's
+        // local variables are the only reliable source.
+        const allVideoUrls = videoUrl ? [videoUrl] : [];
+        const allStoryUrls = storyUrl ? [storyUrl] : [];
 
         // Optimistic lock: complete the order if it hasn't been completed yet
         const updated = await prisma.order.updateMany({
@@ -219,6 +227,7 @@ export async function processImageJob(job: Job): Promise<void> {
               accessToken: config.WHATSAPP_ACCESS_TOKEN,
               phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
             });
+            // Style-change edits re-render a single image — deliver just the current output
             await sendProcessedImages(
               data.phoneNumber,
               [outputUrl],
@@ -245,16 +254,15 @@ export async function processImageJob(job: Job): Promise<void> {
           phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
         });
 
-        // Deliver only the current job's output (not all historical outputs for this order)
-        // completedUrls above is used for the order record only
+        // Deliver ALL completed outputs from every job in this order
         await sendProcessedImages(
           data.phoneNumber,
-          [outputUrl],
+          completedUrls,
           (user?.language as 'hi' | 'en') || 'hi',
           user?.name ?? undefined,
           wa,
-          videoUrl ? [videoUrl] : [],
-          storyUrl ? [storyUrl] : [],
+          allVideoUrls,
+          allStoryUrls,
         );
 
         // Transition session to DELIVERED from PROCESSING, EDIT_PROCESSING, or IDLE

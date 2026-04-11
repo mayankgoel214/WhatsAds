@@ -54,25 +54,47 @@ export async function sendProcessedImages(
     }
   }
 
-  // Send video ads BEFORE feedback buttons
-  if (videoUrls && videoUrls.length > 0) {
-    await sleep(1000);
-    for (const vUrl of videoUrls) {
-      const videoCaption = language === 'hi'
-        ? 'Bonus: Aapka product video ad!'
-        : 'Bonus: Your product video ad!';
-      await wa.sendVideo(phoneNumber, vUrl, videoCaption);
-    }
-  }
+  // Video ads disabled for now
+  // if (videoUrls && videoUrls.length > 0) {
+  //   await sleep(1000);
+  //   for (const vUrl of videoUrls) {
+  //     const videoCaption = language === 'hi'
+  //       ? 'Bonus: Aapka product video ad!'
+  //       : 'Bonus: Your product video ad!';
+  //     await wa.sendVideo(phoneNumber, vUrl, videoCaption);
+  //   }
+  // }
 
-  // Send 9:16 story format images
-  if (storyUrls && storyUrls.length > 0) {
-    await sleep(1000);
-    for (const sUrl of storyUrls) {
-      const storyCaption = language === 'hi'
-        ? 'Story format (9:16) — Instagram Stories & WhatsApp Status ke liye!'
-        : 'Story format (9:16) — perfect for Instagram Stories & WhatsApp Status!';
-      await wa.sendImage(phoneNumber, sUrl, storyCaption);
+  // Story format disabled for now
+  // if (storyUrls && storyUrls.length > 0) {
+  //   await sleep(1000);
+  //   for (const sUrl of storyUrls) {
+  //     const storyCaption = language === 'hi'
+  //       ? 'Story format (9:16) — Instagram Stories & WhatsApp Status ke liye!'
+  //       : 'Story format (9:16) — perfect for Instagram Stories & WhatsApp Status!';
+  //     await wa.sendImage(phoneNumber, sUrl, storyCaption);
+  //   }
+  // }
+
+  // Re-check that ALL jobs for this order are truly complete before showing
+  // feedback buttons. This prevents showing buttons prematurely when another
+  // job finishes and delivers its image AFTER the buttons were already sent.
+  const session = await prisma.session.findUnique({ where: { phoneNumber } });
+  const currentOrderId = session?.currentOrderId;
+  if (currentOrderId) {
+    const pendingJobs = await prisma.imageJob.count({
+      where: {
+        orderId: currentOrderId,
+        status: { notIn: ['completed', 'failed'] },
+      },
+    });
+    if (pendingJobs > 0) {
+      logger.info('Skipping feedback buttons — jobs still pending', {
+        phoneNumber,
+        orderId: currentOrderId,
+        pendingJobs,
+      });
+      return;
     }
   }
 
@@ -222,6 +244,7 @@ export async function handleDelivered(
       currentOrderId: null,
       styleSelection: user.lastStyleUsed ?? session.styleSelection ?? null,
       voiceInstructions: null,
+      earlyPhotoMediaId: null,
     });
     const { handleAwaitingPhoto } = await import('./images.js');
     const freshSession = await prisma.session.findUnique({ where: { phoneNumber: session.phoneNumber } });
@@ -279,6 +302,7 @@ async function handleLoveIt(
     voiceInstructions: null,
     imageMediaIds: [],
     imageStorageUrls: [],
+    earlyPhotoMediaId: null,
   });
 
   logger.info('Order completed — Love it feedback', {

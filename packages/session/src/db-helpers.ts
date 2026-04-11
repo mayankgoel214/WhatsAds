@@ -32,6 +32,7 @@ export async function transitionTo(
     voiceInstructions: string | null;
     imageMediaIds: string[];
     imageStorageUrls: string[];
+    earlyPhotoMediaId: string | null;
     lastUserMessageAt: Date;
     stateEnteredAt: Date;
     cswExpiresAt: Date;

@@ -72,6 +72,7 @@ export async function processSessionTimeout(job: Job): Promise<void> {
           voiceInstructions: null,
           imageMediaIds: [],
           imageStorageUrls: [],
+          earlyPhotoMediaId: null,
           stateEnteredAt: new Date(),
         },
       });
@@ -84,8 +85,9 @@ export async function processSessionTimeout(job: Job): Promise<void> {
       break;
     }
 
-    case 'advance_photos': {
-      log('Auto-advancing from AWAITING_PHOTO to order creation');
+    case 'advance_photos':
+    case 'show_photo_buttons': {
+      log(`Showing photo buttons (action=${data.action})`);
 
       if (session.state !== 'AWAITING_PHOTO') {
         log('Session not in AWAITING_PHOTO, skipping');
@@ -106,21 +108,42 @@ export async function processSessionTimeout(job: Job): Promise<void> {
         job: job.id,
         phoneNumber: data.phoneNumber,
         action: data.action,
-        msg: 'Calling onPhotoBatchTimeout',
+        msg: 'Calling onPhotoBatchTimeout (show buttons)',
         expectedImageCount: resolvedImageCount,
         currentImageCount: session.imageStorageUrls.length,
         earlyPhotoMediaId: session.earlyPhotoMediaId,
       }));
 
-      // Delegate to the session package handler
       const { onPhotoBatchTimeout } = await import('@whatsads/session');
       await onPhotoBatchTimeout(
         data.phoneNumber,
         resolvedImageCount,
         wa,
+        data.action,
       );
 
       log('onPhotoBatchTimeout completed');
+      break;
+    }
+
+    case 'nudge_photo_ready': {
+      log('Sending gentle photo nudge');
+
+      if (session.state !== 'AWAITING_PHOTO') {
+        log('Session not in AWAITING_PHOTO, skipping nudge');
+        return;
+      }
+
+      const nudgeImageCount = data.expectedImageCount ?? session.imageStorageUrls.length;
+      const { onPhotoBatchTimeout: onNudge } = await import('@whatsads/session');
+      await onNudge(
+        data.phoneNumber,
+        nudgeImageCount,
+        wa,
+        'nudge_photo_ready',
+      );
+
+      log('Photo nudge completed');
       break;
     }
   }

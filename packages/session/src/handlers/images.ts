@@ -1,24 +1,25 @@
 /**
- * AWAITING_PHOTO handler — V2 streamlined flow.
+ * AWAITING_PHOTO handler — V3 multi-photo UX.
  *
  * Photos arrive AFTER setup is complete (style + optional instructions already stored).
  *
- * - Download image from WhatsApp media API immediately (5-min expiry).
- * - Upload to Supabase Storage, accumulate URLs on session.
- * - If caption present, store as voiceInstructions.
- * - First photo: acknowledge, start 45s BullMQ auto-advance timer.
- * - At MAX_IMAGES_PER_ORDER (5): immediately create order + payment.
- * - Text "done"/"bas" or timer expiry: create order + payment.
- * - Free trial if user.orderCount === 0.
+ * Rolling debounce flow (replaces old 45s timer + 30s auto-advance):
+ * 1. Photo arrives -> download -> store -> schedule 8s debounce (cancel previous)
+ * 2. 8s debounce fires -> send count message + buttons -> schedule 2-min nudge
+ * 3. User MUST tap a button or type "done" — NO auto-advance ever
+ * 4. 2-min nudge fires -> ONE gentle reminder, then silence
+ *
+ * At MAX_IMAGES_PER_ORDER (5): immediately create order + payment.
+ * Free trial if user.orderCount === 0.
  */
 
 import type { WhatsAppClient } from '@whatsads/whatsapp';
 import { prisma } from '@whatsads/db';
 import type { Session, User } from '@whatsads/db';
 import { uploadFile, Buckets } from '@whatsads/storage';
-import { getSessionTimeoutQueue } from '@whatsads/queue';
-import { msgPhotoReceived, msgPhotoReadyForProcessing, msgGenericError, msgUnknownMessage } from '../messages.js';
-import { MAX_IMAGES_PER_ORDER, PHOTO_BATCH_TIMEOUT_SECONDS, BUTTONS_SHOWN_TIMEOUT_SECONDS } from '../types.js';
+
+import { msgPhotoReadyForProcessing, msgGenericError, msgUnknownMessage } from '../messages.js';
+import { MAX_IMAGES_PER_ORDER, PHOTO_BATCH_TIMEOUT_SECONDS, PHOTO_NUDGE_TIMEOUT_SECONDS } from '../types.js';
 import { transitionTo } from '../db-helpers.js';
 import { logger } from '../logger.js';
 import type { MessageContext } from '../types.js';
@@ -40,6 +41,28 @@ export async function handleAwaitingPhoto(
 ): Promise<void> {
   const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
   const phoneNumber = session.phoneNumber;
+
+  console.info(JSON.stringify({
+    event: 'awaiting_photo_handler_start',
+    phoneNumber,
+    messageType: message.messageType,
+    hasMediaId: !!message.mediaId,
+    earlyPhotoMediaId: session.earlyPhotoMediaId,
+  }));
+
+  // Self-healing: if earlyPhotoMediaId is stuck in an invalid state for AWAITING_PHOTO, reset it
+  if (session.earlyPhotoMediaId === 'order_creating') {
+    console.warn(JSON.stringify({
+      event: 'self_heal_stale_order_creating',
+      phoneNumber,
+      state: session.state
+    }));
+    await prisma.session.update({
+      where: { phoneNumber },
+      data: { earlyPhotoMediaId: null },
+    });
+    session.earlyPhotoMediaId = null; // update in-memory too
+  }
 
   // ---- BUTTON REPLIES (same/new style from returning user with early photo) ----
   if (message.messageType === 'interactive' && message.buttonReplyId) {
@@ -97,26 +120,59 @@ export async function handleAwaitingPhoto(
     const currentCount = session.imageStorageUrls.length;
 
     if (currentCount >= MAX_IMAGES_PER_ORDER) {
-      // Fast path: in-memory session already shows we're at max — skip download.
-      // The transaction below re-checks with a fresh DB read as the authoritative guard.
       await wa.sendText(
         phoneNumber,
         lang === 'hi'
-          ? `Maximum ${MAX_IMAGES_PER_ORDER} photos ho gayi. Processing shuru kar raha hun!`
-          : `Maximum ${MAX_IMAGES_PER_ORDER} photos reached. Starting processing!`,
+          ? `Maximum ${MAX_IMAGES_PER_ORDER} photos ho gayi hain. Kripya "done" bolein ya button dabayein.`
+          : `Maximum ${MAX_IMAGES_PER_ORDER} photos reached. Please say "done" or tap a button to proceed.`,
       );
       return;
     }
 
-    // Download + upload immediately
+    // Download + upload immediately (with one retry on download failure)
     let storageUrl: string;
     try {
-      const { buffer, mimeType } = await downloadWhatsAppMedia(message.mediaId);
+      let mediaResult: { buffer: Buffer; mimeType: string };
+
+      console.info(JSON.stringify({
+        event: 'photo_download_start',
+        phoneNumber,
+        mediaId: message.mediaId,
+        currentCount,
+      }));
+
+      // Stagger concurrent downloads to avoid CDN rate limits
+      const jitter = Math.floor(Math.random() * 1000);
+      await new Promise(r => setTimeout(r, jitter));
+
+      try {
+        mediaResult = await downloadWhatsAppMedia(message.mediaId);
+      } catch (firstErr) {
+        // Retry once after 2 seconds — media URLs are valid for 5 minutes
+        console.warn(JSON.stringify({ event: 'photo_download_retry', mediaId: message.mediaId }));
+        await new Promise(r => setTimeout(r, 2000));
+        try {
+          mediaResult = await downloadWhatsAppMedia(message.mediaId);
+        } catch (retryErr) {
+          console.error(JSON.stringify({
+            event: 'photo_download_failed_permanently',
+            mediaId: message.mediaId,
+            error: retryErr instanceof Error ? retryErr.message : String(retryErr),
+          }));
+          await wa.sendText(phoneNumber, lang === 'hi'
+            ? 'Photo download nahi ho payi. Kripya dobara bhejiye.'
+            : 'Couldn\'t download that photo. Please resend it.');
+          return;
+        }
+      }
+
+      const { buffer, mimeType } = mediaResult;
       const ext = mimeToExt(mimeType);
-      const path = `${phoneNumber}/${Date.now()}_${currentCount}${ext}`;
+      const uniqueId = crypto.randomUUID().slice(0, 8);
+      const path = `${phoneNumber}/${Date.now()}_${uniqueId}${ext}`;
       storageUrl = await uploadFile(Buckets.RAW_IMAGES, path, buffer, mimeType);
     } catch (err) {
-      logger.error('Photo download/upload failed', {
+      logger.error('Photo upload failed', {
         phoneNumber,
         mediaId: message.mediaId,
         error: err instanceof Error ? err.message : String(err),
@@ -128,54 +184,33 @@ export async function handleAwaitingPhoto(
     // If image has a caption, use it as instructions (overrides any prior instructions)
     const rawCaption = message.caption?.trim();
 
-    // Capture both values as definite strings before entering the async transaction
-    // callback — TypeScript cannot narrow `let` variables or optional fields across
-    // closure boundaries.
     const uploadedUrl: string = storageUrl;
     const mediaId: string = message.mediaId as string;
 
-    // Atomically append to imageStorageUrls and imageMediaIds using a transaction
-    // with a fresh read. Without this, concurrent photo bursts each read the same
-    // stale array and only the last write survives.
-    const updated = await prisma.$transaction(async (tx) => {
-      const fresh = await tx.session.findUnique({
-        where: { phoneNumber },
-        select: { imageStorageUrls: true, imageMediaIds: true },
-      });
-
-      const currentUrls = (fresh?.imageStorageUrls as string[]) ?? [];
-      const currentIds = (fresh?.imageMediaIds as string[]) ?? [];
-
-      // Re-check limit inside the transaction with the freshest count.
-      if (currentUrls.length >= MAX_IMAGES_PER_ORDER) {
-        return null; // Already at max — caller handles this
-      }
-
-      return tx.session.update({
-        where: { phoneNumber },
-        data: {
-          imageStorageUrls: [...currentUrls, uploadedUrl],
-          imageMediaIds: [...currentIds, mediaId],
-          ...(rawCaption ? { voiceInstructions: rawCaption.slice(0, 500) } : {}),
-        },
-      });
+    // Atomic push — Postgres array_append() under the hood; no read-modify-write race.
+    const updated = await prisma.session.update({
+      where: { phoneNumber: session.phoneNumber },
+      data: {
+        imageStorageUrls: { push: uploadedUrl },
+        imageMediaIds: { push: mediaId },
+        ...(rawCaption ? { voiceInstructions: rawCaption.slice(0, 500) } : {}),
+      },
     });
 
-    if (!updated) {
-      // Another concurrent write already pushed us to the max — inform the user.
-      await wa.sendText(
-        phoneNumber,
-        lang === 'hi'
-          ? `Maximum ${MAX_IMAGES_PER_ORDER} photos ho gayi. Processing shuru kar raha hun!`
-          : `Maximum ${MAX_IMAGES_PER_ORDER} photos reached. Starting processing!`,
-      );
+    const actualUrls = updated.imageStorageUrls as string[];
+    const newCount = actualUrls.length;
+
+    // Guard: concurrent pushes can briefly exceed the limit — trim and bail out.
+    if (newCount > MAX_IMAGES_PER_ORDER) {
+      const trimmedUrls = actualUrls.slice(0, MAX_IMAGES_PER_ORDER);
+      const trimmedIds = (updated.imageMediaIds as string[]).slice(0, MAX_IMAGES_PER_ORDER);
+      await prisma.session.update({
+        where: { phoneNumber: session.phoneNumber },
+        data: { imageStorageUrls: trimmedUrls, imageMediaIds: trimmedIds },
+      });
+      console.info(JSON.stringify({ event: 'photo_trimmed_excess', phoneNumber: session.phoneNumber, count: newCount }));
       return;
     }
-
-    const newCount = (updated.imageStorageUrls as string[]).length;
-
-    // Acknowledge
-    await wa.sendText(phoneNumber, msgPhotoReceived(lang, newCount));
 
     // At max: advance immediately
     if (newCount >= MAX_IMAGES_PER_ORDER) {
@@ -186,14 +221,13 @@ export async function handleAwaitingPhoto(
       return;
     }
 
-    // Start/reset the 45-second auto-advance timer
-    await schedulePhotoTimeout(phoneNumber, newCount);
+    // Schedule rolling 8s debounce — resets on every new photo
+    await schedulePhotoBatchDebounce(phoneNumber, newCount);
     return;
   }
 
   // ---- VOICE NOTE: could be instructions if we have photos and already asked ----
   if (message.messageType === 'audio' && message.mediaId && session.imageStorageUrls.length > 0) {
-    // Check if we're in instructions phase (earlyPhotoMediaId used as flag: 'awaiting_instructions')
     if (session.earlyPhotoMediaId === 'awaiting_instructions') {
       try {
         const accessToken = process.env.WHATSAPP_ACCESS_TOKEN ?? process.env['WHATSAPP_ACCESS_TOKEN'] ?? '';
@@ -208,17 +242,14 @@ export async function handleAwaitingPhoto(
         const { transcribeVoiceNote } = await import('@whatsads/ai');
         const transcript = await transcribeVoiceNote(buffer, mimeType);
         if (transcript.text) {
-          await prisma.session.update({ where: { phoneNumber }, data: { voiceInstructions: transcript.text.slice(0, 500), earlyPhotoMediaId: null } });
+          await prisma.session.update({ where: { phoneNumber }, data: { voiceInstructions: transcript.text.slice(0, 500) } });
           await wa.sendText(phoneNumber, lang === 'hi' ? `Samajh gaya: "${transcript.text}"\nShuru karte hain!` : `Got it: "${transcript.text}"\nLet's go!`);
-        } else {
-          await prisma.session.update({ where: { phoneNumber }, data: { earlyPhotoMediaId: null } });
         }
         const freshSession = await prisma.session.findUnique({ where: { phoneNumber } });
         if (freshSession) await advanceToPayment(freshSession, user, wa, lang);
         return;
       } catch (err) {
         logger.error('Voice transcription failed', { error: String(err) });
-        await prisma.session.update({ where: { phoneNumber }, data: { earlyPhotoMediaId: null } });
         const freshSession = await prisma.session.findUnique({ where: { phoneNumber } });
         if (freshSession) await advanceToPayment(freshSession, user, wa, lang);
         return;
@@ -234,8 +265,6 @@ export async function handleAwaitingPhoto(
     // If we're in instructions phase, text = instructions (unless it's "done"/"skip")
     if (session.earlyPhotoMediaId === 'awaiting_instructions') {
       if (isDoneIntent) {
-        // Skip instructions
-        await prisma.session.update({ where: { phoneNumber }, data: { earlyPhotoMediaId: null } });
         const freshSession = await prisma.session.findUnique({ where: { phoneNumber } });
         if (freshSession) await advanceToPayment(freshSession, user, wa, lang);
         return;
@@ -248,16 +277,15 @@ export async function handleAwaitingPhoto(
       const currentStyle = session.styleSelection ?? '';
 
       if (wantsModel && currentStyle !== 'style_with_model') {
-        // Auto-switch to with_model style since user clearly wants a person
         await prisma.session.update({
           where: { phoneNumber },
-          data: { voiceInstructions: instructionText, earlyPhotoMediaId: null, styleSelection: 'style_with_model' },
+          data: { voiceInstructions: instructionText, styleSelection: 'style_with_model' },
         });
         logger.info('Auto-switched to style_with_model based on instructions', { phoneNumber, instructionText });
       } else {
         await prisma.session.update({
           where: { phoneNumber },
-          data: { voiceInstructions: instructionText, earlyPhotoMediaId: null },
+          data: { voiceInstructions: instructionText },
         });
       }
 
@@ -266,31 +294,28 @@ export async function handleAwaitingPhoto(
       return;
     }
 
-    // Buttons were shown and user typed instead of tapping — advance
+    // Buttons were shown and user typed "done" or similar — advance to payment
     if (session.earlyPhotoMediaId === 'awaiting_action') {
+      if (isDoneIntent) {
+        const freshSession = await prisma.session.findUnique({ where: { phoneNumber } });
+        if (freshSession) await advanceToPayment(freshSession, user, wa, lang);
+        return;
+      }
+      // Any other text while awaiting_action — treat as instructions and advance
+      const instructionText = message.text.trim().slice(0, 500);
+      await prisma.session.update({
+        where: { phoneNumber },
+        data: { voiceInstructions: instructionText },
+      });
       const freshSession = await prisma.session.findUnique({ where: { phoneNumber } });
       if (freshSession) await advanceToPayment(freshSession, user, wa, lang);
       return;
     }
 
-    // Still in photo collection phase — first "done" shows process/instructions buttons
+    // Still in photo collection phase — "done" shows confirmation buttons (no auto-advance)
     if (isDoneIntent) {
-      await prisma.session.update({
-        where: { phoneNumber },
-        data: { earlyPhotoMediaId: 'awaiting_action' },
-      });
-
-      await wa.sendButtons(
-        phoneNumber,
-        msgPhotoReadyForProcessing(lang, session.imageStorageUrls.length),
-        [
-          { id: 'process_now', title: 'Process now ✅' },
-          { id: 'add_instructions', title: 'Add instructions ✏️' },
-        ],
-      );
-
-      // Schedule auto-advance after 30s if user doesn't tap a button
-      await scheduleButtonsTimeout(phoneNumber, session.imageStorageUrls.length);
+      const imageCount = session.imageStorageUrls.length;
+      await showPhotoButtons(phoneNumber, imageCount, lang, wa);
       return;
     }
 
@@ -305,14 +330,12 @@ export async function handleAwaitingPhoto(
   // ---- Text with no photos yet — guide the user ----
   if (message.messageType === 'text' && session.imageStorageUrls.length === 0) {
     await wa.sendText(phoneNumber, lang === 'hi'
-      ? 'Pehle ek photo bhejein! 📸 Phir "done" bolein.'
-      : 'Send a photo first! 📸 Then say "done".');
+      ? 'Pehle ek photo bhejein! \u{1F4F8} Phir "done" bolein.'
+      : 'Send a photo first! \u{1F4F8} Then say "done".');
     return;
   }
 
   // ---- No photos yet and non-image message ----
-  // Don't confuse users with error messages right after entering this state
-  // (can be triggered by delayed/racing messages from previous state)
   const stateAge = Date.now() - new Date(session.stateEnteredAt ?? session.updatedAt).getTime();
   if (stateAge < 10_000) {
     logger.info(JSON.stringify({
@@ -327,13 +350,14 @@ export async function handleAwaitingPhoto(
 }
 
 // ---------------------------------------------------------------------------
-// Called by the SessionTimeout worker when photo_timeout fires
+// Called by the SessionTimeout worker when photo debounce fires
 // ---------------------------------------------------------------------------
 
 export async function onPhotoBatchTimeout(
   phoneNumber: string,
   expectedImageCount: number,
   wa: WhatsAppClient,
+  action?: string,
 ): Promise<void> {
   const session = await prisma.session.findUnique({ where: { phoneNumber } });
   if (!session) {
@@ -341,7 +365,7 @@ export async function onPhotoBatchTimeout(
     return;
   }
 
-  // Guard: only act if still in AWAITING_PHOTO and count hasn't grown
+  // Guard: only act if still in AWAITING_PHOTO
   if (session.state !== 'AWAITING_PHOTO') {
     logger.info('onPhotoBatchTimeout: session no longer in AWAITING_PHOTO — skipping', {
       phoneNumber,
@@ -351,51 +375,102 @@ export async function onPhotoBatchTimeout(
     return;
   }
 
-  if (session.imageStorageUrls.length !== expectedImageCount) {
-    logger.info('onPhotoBatchTimeout: image count mismatch — stale timeout, skipping', {
-      phoneNumber,
-      currentCount: session.imageStorageUrls.length,
-      expectedImageCount,
-    });
-    return;
-  }
-
   const user = await prisma.user.findUnique({ where: { phoneNumber } });
   if (!user) return;
 
   const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
+  const imageCount = (session.imageStorageUrls as string[]).length;
 
-  // Guard: order already in progress — do nothing
-  if (session.earlyPhotoMediaId === 'order_creating') {
+  // Self-healing for stale order_creating
+  if (session.earlyPhotoMediaId === 'order_creating' && session.state === 'AWAITING_PHOTO') {
+    console.warn(JSON.stringify({ event: 'self_heal_debounce_stale', phoneNumber }));
+    await prisma.session.update({
+      where: { phoneNumber },
+      data: { earlyPhotoMediaId: null },
+    });
+    session.earlyPhotoMediaId = null;
+    // Don't return — continue to show buttons
+  }
+
+  // ---------- NUDGE (2-min gentle reminder) ----------
+  if (action === 'nudge_photo_ready') {
+    if (imageCount === 0) return;
+
+    // Stale-debounce guard: a newer nudge with a higher count will handle this
+    if (expectedImageCount !== undefined && imageCount !== expectedImageCount) {
+      logger.info(JSON.stringify({ event: 'nudge_stale', phoneNumber, expected: expectedImageCount, current: imageCount }));
+      return;
+    }
+
+    // Don't nudge if already past the button stage
+    if (session.earlyPhotoMediaId === 'awaiting_action' || session.earlyPhotoMediaId === 'order_creating') {
+      return;
+    }
+
+    const nudgeMsg = lang === 'hi'
+      ? `${imageCount} photos ready hain — "done" bolein ya aur photos bhejein.`
+      : `${imageCount} photos ready — say "done" or send more photos.`;
+
+    await wa.sendText(phoneNumber, nudgeMsg);
+    // NO auto-advance. Just a reminder. User must act.
     return;
   }
 
-  // Second timeout fires: buttons were shown but user didn't tap — auto-advance
-  if (
-    session.earlyPhotoMediaId === 'awaiting_action' ||
-    session.earlyPhotoMediaId === 'awaiting_instructions'
-  ) {
-    await advanceToPayment(session, user, wa, lang);
+  // ---------- SHOW BUTTONS (8s debounce or legacy advance_photos) ----------
+  // Handles both 'show_photo_buttons' and legacy 'advance_photos'
+  if (imageCount === 0) return;
+
+  // Check if buttons were already shown (by a previous debounce job with same count).
+  // This guard MUST run before the count check — two jobs with the same expectedImageCount
+  // would both pass the count guard, causing duplicate button sends.
+  if (session.earlyPhotoMediaId === 'awaiting_action' ||
+      session.earlyPhotoMediaId === 'awaiting_instructions' ||
+      session.earlyPhotoMediaId === 'order_creating') {
+    console.info(JSON.stringify({ event: 'debounce_already_handled', phoneNumber }));
     return;
   }
 
-  // First timeout fires: show Process / Add-instructions buttons, schedule second timeout
+  // Stale-debounce guard: only the job whose expectedImageCount matches the current
+  // count should fire. Earlier debounce jobs (with lower counts) self-discard here.
+  if (expectedImageCount !== undefined && imageCount !== expectedImageCount) {
+    logger.info(JSON.stringify({ event: 'debounce_stale', phoneNumber, expected: expectedImageCount, current: imageCount }));
+    return;
+  }
+
+  await showPhotoButtons(phoneNumber, imageCount, lang, wa);
+}
+
+// ---------------------------------------------------------------------------
+// Show count + buttons helper (shared by debounce, "done", and nudge)
+// ---------------------------------------------------------------------------
+
+async function showPhotoButtons(
+  phoneNumber: string,
+  imageCount: number,
+  lang: 'hi' | 'en',
+  wa: WhatsAppClient,
+): Promise<void> {
+  const countMsg = lang === 'hi'
+    ? `${imageCount} photo${imageCount > 1 ? 's' : ''} mil gayi \u2705`
+    : `${imageCount} photo${imageCount > 1 ? 's' : ''} received \u2705`;
+
+  try {
+    await wa.sendButtons(phoneNumber, countMsg, [
+      { id: 'process_now', title: lang === 'hi' ? 'Shuru karein' : 'Start' },
+      { id: 'add_instructions', title: lang === 'hi' ? 'Instructions' : 'Add instructions' },
+    ]);
+  } catch {
+    await wa.sendText(phoneNumber, `${countMsg}\n\n${lang === 'hi' ? '"done" bolein ya instructions bhejein.' : 'Say "done" or send instructions.'}`);
+  }
+
+  // Update earlyPhotoMediaId to track that buttons were shown
   await prisma.session.update({
     where: { phoneNumber },
     data: { earlyPhotoMediaId: 'awaiting_action' },
   });
 
-  await wa.sendButtons(
-    phoneNumber,
-    msgPhotoReadyForProcessing(lang, session.imageStorageUrls.length),
-    [
-      { id: 'process_now', title: 'Process now ✅' },
-      { id: 'add_instructions', title: 'Add instructions' },
-    ],
-  );
-
-  // Schedule second (30s) timeout using the same image count as the guard value
-  await scheduleButtonsTimeout(phoneNumber, expectedImageCount);
+  // Schedule 2-minute nudge (gentle reminder, NOT auto-advance)
+  await schedulePhotoNudge(phoneNumber, imageCount);
 }
 
 // ---------------------------------------------------------------------------
@@ -410,18 +485,29 @@ async function advanceToPayment(
 ): Promise<void> {
   if (session.imageStorageUrls.length === 0) return;
 
-  // Guard: if session already left AWAITING_PHOTO, don't create duplicate orders
-  const fresh = await prisma.session.findUnique({ where: { phoneNumber: session.phoneNumber } });
-  if (!fresh || fresh.state !== 'AWAITING_PHOTO') return;
+  const phoneNumber = session.phoneNumber;
 
-  // Set earlyPhotoMediaId to 'order_creating' to block the 45s photo timeout
-  // from calling askForInstructions() while order creation is in progress.
-  // The timeout guard in onPhotoBatchTimeout checks for 'awaiting_instructions'
-  // but we also need to block it during order creation.
-  await prisma.session.update({
-    where: { phoneNumber: session.phoneNumber },
-    data: { earlyPhotoMediaId: 'order_creating' },
+  // Atomic guard — only one caller can win this race.
+  const claimed = await prisma.session.updateMany({
+    where: {
+      phoneNumber,
+      state: 'AWAITING_PHOTO',
+      earlyPhotoMediaId: { not: 'order_creating' },
+    },
+    data: {
+      earlyPhotoMediaId: 'order_creating',
+    },
   });
+
+  if (claimed.count === 0) {
+    console.info(JSON.stringify({ event: 'advance_to_payment_skipped', reason: 'already_claimed', phoneNumber }));
+    return;
+  }
+
+  const fresh = await prisma.session.findUnique({ where: { phoneNumber } });
+  if (!fresh || (fresh.imageStorageUrls as string[]).length === 0) {
+    return;
+  }
 
   const styleId = fresh.styleSelection ?? 'style_clean_white';
 
@@ -439,34 +525,47 @@ async function advanceToPayment(
 }
 
 // ---------------------------------------------------------------------------
-// BullMQ: schedule auto-advance after PHOTO_BATCH_TIMEOUT_SECONDS
+// BullMQ: schedule rolling 8s debounce — unique job ID per arrival
+// ---------------------------------------------------------------------------
+// We intentionally do NOT try to remove/cancel prior debounce jobs.
+// The remove-then-add pattern has a race window: a job can move to `active`
+// between getJob() and remove(), causing the subsequent add() to fail on a
+// duplicate ID error.
+//
+// Instead we use a unique ID per photo arrival. Multiple debounce jobs may
+// exist in the queue simultaneously, but only the LAST one (whose
+// expectedImageCount equals the current session count) will actually execute.
+// All earlier ones self-discard via the count guard in onPhotoBatchTimeout.
 // ---------------------------------------------------------------------------
 
-async function schedulePhotoTimeout(
+async function schedulePhotoBatchDebounce(
   phoneNumber: string,
   imageCount: number,
 ): Promise<void> {
-  const queue = getSessionTimeoutQueue();
-  const jobId = `photo_timeout_${phoneNumber}_${Date.now()}`;
-
   try {
-    await queue.add(
-      'advance_photos',
+    const { getSessionTimeoutQueue } = await import('@whatsads/queue');
+    const sessionTimeoutQueue = getSessionTimeoutQueue();
+
+    const jobId = `photo_debounce_${phoneNumber}_${Date.now()}`;
+
+    await sessionTimeoutQueue.add(
+      'session_timeout',
       {
         phoneNumber,
         expectedState: 'AWAITING_PHOTO',
+        action: 'show_photo_buttons',
         expectedImageCount: imageCount,
-        action: 'advance_photos',
       },
       {
-        jobId,
         delay: PHOTO_BATCH_TIMEOUT_SECONDS * 1000,
-        attempts: 1,
+        jobId,
+        removeOnComplete: true,
+        removeOnFail: true,
       },
     );
   } catch (err) {
-    // Non-fatal
-    logger.warn('Failed to schedule photo batch timeout', {
+    // Non-fatal — the session will still work; user can type "done"
+    logger.warn('Failed to schedule photo batch debounce', {
       phoneNumber,
       imageCount,
       error: err instanceof Error ? err.message : String(err),
@@ -474,36 +573,38 @@ async function schedulePhotoTimeout(
   }
 }
 
-/**
- * Schedule the second (post-buttons) auto-advance timeout.
- * Reuses the same worker event — the guard in onPhotoBatchTimeout will
- * detect earlyPhotoMediaId === 'awaiting_action' and advance immediately.
- */
-async function scheduleButtonsTimeout(
+// ---------------------------------------------------------------------------
+// BullMQ: schedule 2-minute gentle nudge (NOT auto-advance)
+// ---------------------------------------------------------------------------
+// Same unique-ID strategy as schedulePhotoBatchDebounce — no cancel attempt.
+// Stale nudge jobs self-discard via the count + state guard in onPhotoBatchTimeout.
+// ---------------------------------------------------------------------------
+
+async function schedulePhotoNudge(
   phoneNumber: string,
   imageCount: number,
 ): Promise<void> {
-  const queue = getSessionTimeoutQueue();
-  const jobId = `photo_buttons_timeout_${phoneNumber}_${Date.now()}`;
-
   try {
-    await queue.add(
-      'advance_photos',
+    const { getSessionTimeoutQueue } = await import('@whatsads/queue');
+    const sessionTimeoutQueue = getSessionTimeoutQueue();
+
+    await sessionTimeoutQueue.add(
+      'session_timeout',
       {
         phoneNumber,
         expectedState: 'AWAITING_PHOTO',
+        action: 'nudge_photo_ready',
         expectedImageCount: imageCount,
-        action: 'advance_photos',
       },
       {
-        jobId,
-        delay: BUTTONS_SHOWN_TIMEOUT_SECONDS * 1000,
-        attempts: 1,
+        delay: PHOTO_NUDGE_TIMEOUT_SECONDS * 1000,
+        jobId: `photo_nudge_${phoneNumber}_${Date.now()}`,
+        removeOnComplete: true,
+        removeOnFail: true,
       },
     );
   } catch (err) {
-    // Non-fatal — the user can still tap the buttons
-    logger.warn('Failed to schedule post-buttons timeout', {
+    logger.warn('Failed to schedule photo nudge', {
       phoneNumber,
       imageCount,
       error: err instanceof Error ? err.message : String(err),

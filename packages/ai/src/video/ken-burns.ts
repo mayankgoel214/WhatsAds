@@ -57,11 +57,11 @@ function getZoompanFilter(
 
     case 'pan_right':
       // Zoom 1.2x, pan from left to right
-      return `zoompan=z='1.2':x='(iw/zoom-iw)*on/${totalFrames}+iw/2-iw/zoom/2-((iw/zoom-iw)/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=${outputSize}x${outputSize}:fps=${fps}`;
+      return `zoompan=z='1.2':x='(iw-iw/zoom)*on/${totalFrames}':y='(ih-ih/zoom)/2':d=${totalFrames}:s=${outputSize}x${outputSize}:fps=${fps}`;
 
     case 'pan_left':
       // Zoom 1.2x, pan from right to left
-      return `zoompan=z='1.2':x='(iw-iw/zoom)*(1-on/${totalFrames})+iw/2-iw/zoom/2-((iw-iw/zoom)/2)':y='ih/2-(ih/zoom/2)':d=${totalFrames}:s=${outputSize}x${outputSize}:fps=${fps}`;
+      return `zoompan=z='1.2':x='(iw-iw/zoom)*(1-on/${totalFrames})':y='(ih-ih/zoom)/2':d=${totalFrames}:s=${outputSize}x${outputSize}:fps=${fps}`;
 
     case 'zoom_in_top':
       // Zoom into top-center (product cap/lid area)
@@ -165,9 +165,12 @@ export async function generateKenBurnsVideo(
     // Read output
     videoBuffer = await readFile(tmpOutput);
   } finally {
-    // Clean up temp files regardless of success or timeout
-    unlink(tmpInput).catch(() => {});
-    unlink(tmpOutput).catch(() => {});
+    unlink(tmpInput).catch(err => {
+      console.warn(JSON.stringify({ event: 'temp_file_cleanup_failed', file: 'tmpInput', error: err instanceof Error ? err.message : String(err) }));
+    });
+    unlink(tmpOutput).catch(err => {
+      console.warn(JSON.stringify({ event: 'temp_file_cleanup_failed', file: 'tmpOutput', error: err instanceof Error ? err.message : String(err) }));
+    });
   }
 
   const durationMs = Date.now() - startMs;

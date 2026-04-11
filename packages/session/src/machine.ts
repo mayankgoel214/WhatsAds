@@ -122,10 +122,7 @@ export async function handleIncomingMessage(
             voiceInstructions: null,
             imageMediaIds: [],
             imageStorageUrls: [],
-          });
-          await prisma.session.update({
-            where: { phoneNumber },
-            data: { earlyPhotoMediaId: null },
+            earlyPhotoMediaId: null,
           });
           const freshSession = await getSession(phoneNumber);
           if (freshSession) await handleIdle(freshSession, user, message, wa);
@@ -146,10 +143,7 @@ export async function handleIncomingMessage(
           await transitionTo(phoneNumber, 'IDLE', {
             imageMediaIds: [],
             imageStorageUrls: [],
-          });
-          await prisma.session.update({
-            where: { phoneNumber },
-            data: { earlyPhotoMediaId: null },
+            earlyPhotoMediaId: null,
           });
           const freshSession = await getSession(phoneNumber);
           if (freshSession) await handleIdle(freshSession, user, message, wa);
@@ -162,10 +156,11 @@ export async function handleIncomingMessage(
           : 0;
 
         if (stuckMinutes > 10) {
-          await transitionTo(phoneNumber, 'IDLE');
-          await prisma.session.update({
-            where: { phoneNumber },
-            data: { currentOrderId: null, imageMediaIds: [], imageStorageUrls: [], earlyPhotoMediaId: null },
+          await transitionTo(phoneNumber, 'IDLE', {
+            currentOrderId: null,
+            imageMediaIds: [],
+            imageStorageUrls: [],
+            earlyPhotoMediaId: null,
           });
           const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
           await wa.sendText(phoneNumber, msgProcessingStuck(lang));
@@ -193,6 +188,7 @@ export async function handleIncomingMessage(
             currentOrderId: null,
             imageMediaIds: [],
             imageStorageUrls: [],
+            earlyPhotoMediaId: null,
           });
           const freshSession = await getSession(phoneNumber);
           if (freshSession) await handleIdle(freshSession, user, message, wa);

@@ -226,7 +226,7 @@ function detectMime(buf: Buffer): 'image/jpeg' | 'image/png' | 'image/webp' {
 export async function combinedQualityCheck(
   inputBuffer: Buffer,
   outputBuffer: Buffer,
-  options: { checkFidelity: boolean }
+  options: { checkFidelity: boolean; voiceInstructions?: string }
 ): Promise<CombinedQAResult> {
   const startMs = Date.now();
 
@@ -239,17 +239,25 @@ export async function combinedQualityCheck(
 
   const parts: Array<{ inlineData?: { mimeType: string; data: string }; text?: string }> = [];
 
+  let promptText = options.checkFidelity
+    ? COMBINED_QA_PROMPT_WITH_FIDELITY
+    : COMBINED_QA_PROMPT_NO_FIDELITY;
+
+  if (options.voiceInstructions) {
+    promptText += `\n\nIMPORTANT EXCEPTION: The user gave these specific instructions: "${options.voiceInstructions.slice(0, 300)}"\nIf the image follows these instructions (e.g., floating product, unusual angles, specific backgrounds, surreal effects), those are INTENTIONAL creative choices and should NOT be penalized as defects, impossible integration, or implausible physics. Score them positively as creative execution.`;
+  }
+
   if (options.checkFidelity) {
     // Send both images for fidelity comparison
     const inputBase64 = inputBuffer.toString('base64');
     const inputMime = detectMime(inputBuffer);
     parts.push({ inlineData: { mimeType: inputMime, data: inputBase64 } });
     parts.push({ inlineData: { mimeType: outputMime, data: outputBase64 } });
-    parts.push({ text: COMBINED_QA_PROMPT_WITH_FIDELITY });
+    parts.push({ text: promptText });
   } else {
     // Only send the output for scene quality check
     parts.push({ inlineData: { mimeType: outputMime, data: outputBase64 } });
-    parts.push({ text: COMBINED_QA_PROMPT_NO_FIDELITY });
+    parts.push({ text: promptText });
   }
 
   try {
@@ -272,6 +280,20 @@ export async function combinedQualityCheck(
     if (!result.success) {
       throw new Error(`Combined QA schema failed: ${result.error.message}`);
     }
+
+    // Server-side re-validation — don't trust the model's pass boolean
+    const data = result.data;
+    const serverPass =
+      data.score >= 65 &&
+      data.productFidelityScore >= 25 &&
+      !data.hasRandomText &&
+      !data.hasSketchesOrDrawings &&
+      !data.hasFundamentalError &&
+      data.humanAnatomy !== 'major_issue' &&
+      data.productIntegration !== 'impossible';
+
+    // Override the model's pass with server-computed pass
+    data.pass = serverPass;
 
     console.info(JSON.stringify({
       event: 'combined_qa_complete',

@@ -66,14 +66,14 @@ export function msgWelcomeBackNoStyle(lang: Lang, name: string): string {
 export function msgSendPhoto(lang: Lang, isFirstOrder: boolean): string {
   if (isFirstOrder) {
     if (lang === 'hi') {
-      return 'Photo bhejiye! 📸 Pehli photo bilkul free.\n(Zyada bheji to Rs 99 per photo.)';
+      return 'Apne product photos bhejiye — 5 tak bhej sakte hain.\nPehla free hai! (Baaki Rs 99 each.)';
     }
-    return 'Send your photo! 📸 First one is free.\n(Additional photos are Rs 99 each.)';
+    return 'Send your product photos — up to 5 at a time.\nFirst one is free! (Additional photos Rs 99 each.)';
   }
   if (lang === 'hi') {
-    return 'Photo bhejiye! 📸\n5 tak bhej sakte hain. Rs 99 per photo.';
+    return 'Apne product photos bhejiye — 5 tak bhej sakte hain.\nRs 99 per photo.';
   }
-  return 'Send your photo! 📸\nUp to 5 at once. Rs 99 per photo.';
+  return 'Send your product photos — up to 5 at a time.\nRs 99 per photo.';
 }
 
 // ---------------------------------------------------------------------------

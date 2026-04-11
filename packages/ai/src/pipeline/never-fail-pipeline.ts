@@ -107,7 +107,7 @@ export async function processImageNeverFail(
     let tier2aTimer: ReturnType<typeof setTimeout>;
     try {
       const briaBuffer = await Promise.race([
-        createBriaFallbackShot(rawBuffer, params.imageUrl, style, category),
+        createBriaFallbackShot(rawBuffer, params.imageUrl, style, category, params.voiceInstructions),
         new Promise<never>((_, reject) => {
           tier2aTimer = setTimeout(() => reject(new Error('Tier 2A (Bria) timed out after 60s')), 60_000);
         }),
@@ -116,7 +116,7 @@ export async function processImageNeverFail(
 
       // Run quick deterministic check on Bria output
       const briaCheck = await runDeterministicChecks(rawBuffer, briaBuffer);
-      if (briaCheck.pass || briaCheck.estimatedFillPct > 15) {
+      if (briaCheck.pass || briaCheck.estimatedFillPct > 30) {
         let output = await postProcessFinal(briaBuffer, style);
         output = await addAILabel(output);
 

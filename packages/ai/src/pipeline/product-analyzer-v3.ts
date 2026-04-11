@@ -119,6 +119,13 @@ const STYLE_NARRATIVE_POOLS: Record<string, Record<string, string[]>> = {
       `CAFE TABLE. Techniques: WARM AMBIANCE + BACKGROUND BOKEH + INTIMATE FRAMING. Product on a round cafe table, a latte with art beside it, warm pendant lamp overhead. The cafe interior dissolves into creamy warm bokeh behind — other patrons, shelves, hanging plants all softened. Intimate, inviting atmosphere.`,
       `BEDSIDE STYLING. Techniques: NIGHTSTAND SCENE + EVENING LAMP + COZY DEPTH. Product on a styled bedroom nightstand beside a stack of books, a small plant, and reading glasses. Warm evening lamp glow from behind the product creating a rim of amber light. Soft linen textures. The viewer wants this exact quiet evening.`,
     ],
+    jewellery: [
+      `VANITY MOMENT. The jewellery set arranged on a vintage brass vanity tray beside an ornate mirror. Warm lamp light spills from the left. A small perfume bottle and fresh flowers as props. The scene suggests a woman preparing for an evening out.`,
+      `SILK AND GOLD. The jewellery draped across flowing silk fabric in deep jewel tones (burgundy, navy, or emerald). Natural window light creates soft highlights on the metal. One piece laid flat, others arranged as if just removed.`,
+      `BRIDAL PREPARATION. The jewellery laid out on an embroidered cushion or pooja thali. Warm golden light from traditional brass lamps. Rose petals scattered nearby. The scene suggests auspicious preparation.`,
+      `COLLECTOR'S DESK. The jewellery on a dark leather-topped desk beside a magnifying glass and soft cloth. Warm task light from an antique desk lamp. Scholarly, appreciative atmosphere — the jewellery as art object.`,
+      `GIFT UNWRAPPED. The jewellery emerging from its velvet box, lid propped open, on a marble surface. Soft diffused light. A handwritten card or ribbon nearby. The moment of receiving something precious.`,
+    ],
     beverage_cold: [
       `GYM COUNTER ENERGY. Techniques: HARSH GYM FLUORESCENT LIGHT + WORKOUT PROPS + CONDENSATION CLOSE-UP. The cold can sits on a gym counter on top of a folded gym towel, beside wireless earbuds and a chalk-dusted weight clip. Harsh overhead fluorescent creates cool-white rim highlights on the beaded condensation. Blurred barbells and cable machines in background bokeh. Cold, refreshing, high-energy — the reward after the grind.`,
       `SKATE RAMP EDGE. Techniques: AFTERNOON BACKLIGHT + URBAN CONCRETE + MOTION BLUR BACKGROUND. The can rests on the concrete edge of a skate ramp, catching afternoon sun from behind that creates a glowing rim on every condensation droplet. The blurred shapes of skaters mid-trick fill the background. Worn grip tape and chalk on the concrete below. Raw urban energy — cold, charged, alive.`,
@@ -134,6 +141,13 @@ const STYLE_NARRATIVE_POOLS: Record<string, Record<string, string[]>> = {
       `LEVITATION BEAM. Techniques: SPOTLIGHT CONE + SINGLE SUSPENDED ELEMENT. Dark gradient background. Product at center with one key ingredient piece suspended above it in a tight cone of hard spotlight. Everything outside the cone is pitch black. Dramatic, theatrical, otherworldly.`,
       `WET OBSIDIAN. Techniques: WET BLACK SURFACE + CONDENSATION + COOL RIM LIGHT. Product on wet black obsidian surface, beaded with condensation droplets — each one a tiny lens reflecting the product. Single cool blue-white rim light from behind creating a sharp edge glow. The wet surface reflects the product in a dark, distorted mirror. Cold, refreshing, premium.`,
     ],
+    jewellery: [
+      `VELVET THRONE. The jewellery set rests on a sculpted black velvet bust and matching earring stands, dramatically lit by a single hard spotlight from above. The velvet absorbs all light except what the gems catch. Pure black background. The display form gives the jewellery its natural wearing shape.`,
+      `FLOATING CONSTELLATION. Each piece of the jewellery set suspended in pure black void, arranged as if worn by an invisible figure. A single focused beam from upper-left catches every facet, creating scattered light points like stars. No surface, no props — just jewellery and light against infinity.`,
+      `STONE ALTAR. The jewellery arranged on a raw black marble slab with visible white veining. One hard side light rakes across the stone, catching the metalwork. The marble texture provides visual contrast to the precision of the jewellery. Deep shadows pool around the edges.`,
+      `MIRROR FRAGMENT. The jewellery placed on a large shard of dark mirror glass, its reflection creating a perfect symmetrical double below. A thin beam of light cuts diagonally across the frame, illuminating only the jewellery. Everything else is shadow.`,
+      `INTIMATE REVEAL. Close-up composition — the jewellery fills 80% of the frame against pitch black. Extreme shallow depth of field, with the foreground piece razor-sharp and background pieces softly blurred. Every facet, prong, and setting is visible in exquisite detail.`,
+    ],
     default: [
       `DRAMATIC HERO. Techniques: POLISHED BLACK ACRYLIC + MIRROR REFLECTION + DUAL RIM LIGHT. Product on polished black acrylic with perfect mirror reflection below. Two strip softbox rim lights from behind-left and behind-right creating razor-sharp glowing edges on every surface. Atmospheric mist at the base. Premium, cinematic, desire-inducing.`,
       `LIQUID EXPLOSION. Techniques: WATER SPLASH + SINGLE HARD SPOTLIGHT + DARK VOID. Dark void. A dramatic water or liquid splash frozen mid-explosion around the product — droplets and arcs of liquid suspended in sharp focus. Single hard overhead spotlight catches every droplet. The violence of the splash contrasts with the product's stillness. Dynamic, powerful, arresting.`,
@@ -144,6 +158,10 @@ const STYLE_NARRATIVE_POOLS: Record<string, Record<string, string[]>> = {
   },
 
   style_outdoor: {
+    jewellery: [
+      `GARDEN STONE. The jewellery arranged on a weathered stone surface in a lush garden. Dappled sunlight through leaves creates dancing light patterns on the gems. A single green leaf or flower petal nearby for scale and color contrast.`,
+      `MORNING DEW. The jewellery on a dark slate surface in early morning light. The background is a soft blur of garden greens. Warm golden backlight creates a rim glow on the metalwork. Peaceful, natural luxury.`,
+    ],
     default: [
       `GOLDEN HOUR. Techniques: BACKLIGHT RIM GLOW + NATURAL SURFACE + DEPTH LAYERING. Product OUTDOORS on weathered wood surface. Golden hour sun LOW behind creating a warm golden rim on every edge. Lush green foliage visible in soft bokeh background. 1-2 natural props (leaves, wildflowers) as foreground blur. Fresh, alive, authentic.`,
       `FOREST FLOOR. Techniques: MOSS-COVERED STONE + DAPPLED LIGHT + FERN FOREGROUND. Product on a moss-covered stone in a forest setting. Dappled light filtering through the canopy creates dancing patches of warm light on the product. Unfurling fern fronds enter the frame as foreground blur. Deep green tones, earthy and organic. The product feels discovered, natural, precious.`,
@@ -229,6 +247,10 @@ const STYLE_NARRATIVE_POOLS: Record<string, Record<string, string[]>> = {
   },
 
   style_minimal: {
+    jewellery: [
+      `GALLERY PEDESTAL. The jewellery centered on a white marble cube pedestal against a pale grey wall. Single hard overhead light creates a perfect circular pool of illumination. The shadow of the jewellery on the marble is as precise as the jewellery itself.`,
+      `NEGATIVE SPACE STUDY. The jewellery placed at the bottom-right intersection of a rule-of-thirds grid. 70% of the frame is smooth dove grey. One directional light from the left. The emptiness amplifies the preciousness of the object.`,
+    ],
     default: [
       `ARCHITECTURAL STILLNESS. Techniques: SINGLE DIRECTIONAL LIGHT + DRAMATIC SHADOW + NEGATIVE SPACE. One hard light source from 60-80° creating a long, geometric shadow that IS the primary compositional element — the shadow is as important as the product itself. Product on raw concrete or honed stone. 60-70% of the frame is intentional empty space creating visual tension. Rule-of-thirds placement at the intersection. NO props, NO people, NO hands. The interplay of form, shadow, and void creates an architectural meditation. Zen, sophisticated, gallery-worthy.`,
       `LEVITATION STUDY. Product floats in infinite white void with only a soft contact shadow beneath. Dead center placement. The emptiness IS the composition. Zero props, zero surface texture.`,
@@ -548,6 +570,15 @@ If this product is a cold beverage (isColdBeverage = true), ALL of the following
   * Jewellery → light refractions, sparkle points, soft fabric flow
   * Candles → warm smoke wisps, melted wax drips, flame glow on surroundings
   DO NOT use generic mist/fog. Every dynamic element must connect to what the product IS.
+
+- FORBIDDEN DYNAMIC ELEMENTS BY CATEGORY:
+  * Jewellery: NO water, splashes, liquid, or moisture. Use ONLY: light refractions, sparkle points, soft fabric flow, warm glow.
+  * Electronics: NO water or liquid. Use ONLY: light trails, digital particles, subtle glow effects.
+  * Garments: NO water or liquid. Use ONLY: fabric motion, wind, floating threads, natural movement.
+  * Candles: NO water. Use ONLY: smoke wisps, warm glow, flame reflections.
+  * Bags: NO water. Use ONLY: motion blur, fabric texture, natural light.
+  * Skincare: Water/dew is OK only if the product is water-based. Otherwise use: flower petals, product texture, soft glow.
+  * Food/Beverage: Water, ice, splashes, condensation are all OK and encouraged.
 
 CRITICAL CONSTRAINT FOR CREATIVE BRIEF: The creative brief must NEVER describe the product differently from how it appears in the input photo. Do not invent details, simplify the product, or change its design. The brief should describe the SCENE and ENVIRONMENT around the product, not redesign the product itself. Every physical detail of the product (shape, color, material, components, text) must remain exactly as photographed.
 - CONDENSATION/WATER DROPLETS: Only add condensation, water droplets, or dewy surfaces if the product is a BEVERAGE CONTAINER (bottle, tumbler, can, glass) or a FOOD/DRINK product. For ALL other product categories (jewellery, electronics, candles, bags, garments, skincare, home decor), the product surface must remain DRY. Do not add water droplets to products that would never be wet in real life.

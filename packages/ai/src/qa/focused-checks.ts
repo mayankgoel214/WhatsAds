@@ -88,6 +88,7 @@ Reply with ONLY a single number (e.g., "1" or "2"). Nothing else.`;
 async function checkFundamentalDefects(
   client: GoogleGenAI,
   outputBuffer: Buffer,
+  voiceInstructions?: string,
 ): Promise<{ hasDefect: boolean; description: string | null; raw: string }> {
   const prompt = `Inspect this product advertisement image for CRITICAL defects only. Check for:
 
@@ -102,6 +103,8 @@ async function checkFundamentalDefects(
 Do NOT flag minor issues like slight color differences, soft focus in background, or subtle texture artifacts.
 
 EXCEPTION: Images, photos, or artwork that are PRINTED ON a curved product surface (e.g., a mug, bottle, or cylinder) will naturally appear warped/curved — this is physically correct and NOT a defect. Do not flag curvature distortion of surface prints.
+
+EXCEPTION: If the user specifically requested any of these effects (floating, levitation, unusual angles, surreal composition), then those are INTENTIONAL and NOT defects. User's instructions: "${voiceInstructions ?? 'none'}"
 
 If you find ANY critical defect, reply: "YES: [one sentence describing the defect]"
 If the image looks clean with no critical defects, reply: "NO"
@@ -237,6 +240,7 @@ export async function runFocusedChecks(
   inputBuffer: Buffer,
   outputBuffer: Buffer,
   productName: string,
+  voiceInstructions?: string,
 ): Promise<FocusedCheckResult> {
   const client = getClient();
 
@@ -262,7 +266,7 @@ export async function runFocusedChecks(
       { count: -1, raw: 'timeout' }, // -1 = unknown, treated as fail
     ),
     withTimeout(
-      checkFundamentalDefects(client, outputBuffer),
+      checkFundamentalDefects(client, outputBuffer, voiceInstructions),
       TIMEOUT_MS,
       { hasDefect: true, description: 'check timed out — assuming defect', raw: 'timeout' },
     ),

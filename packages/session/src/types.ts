@@ -50,11 +50,14 @@ export const MAX_IMAGES_PER_ORDER = 5;
 /** Free revisions per order */
 export const FREE_REVISIONS_PER_ORDER = 2;
 
-/** Seconds to wait for more photos before showing Process/Instructions buttons */
-export const PHOTO_BATCH_TIMEOUT_SECONDS = 45;
+/** Seconds to wait (rolling debounce) for more photos before showing buttons */
+export const PHOTO_BATCH_TIMEOUT_SECONDS = 8;
 
-/** Seconds to wait after showing Process/Instructions buttons before auto-advancing */
+/** @deprecated No longer used — buttons no longer auto-advance */
 export const BUTTONS_SHOWN_TIMEOUT_SECONDS = 30;
+
+/** Seconds before sending a gentle nudge if user hasn't acted after buttons shown */
+export const PHOTO_NUDGE_TIMEOUT_SECONDS = 120;
 
 /** Payment check job delay in milliseconds (2 minutes) */
 export const PAYMENT_CHECK_DELAY_MS = 120_000;

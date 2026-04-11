@@ -102,6 +102,11 @@ export {
   type EditCommand,
 } from './parsing/instructions.js';
 
+export {
+  parsePerPhotoInstructions,
+  type InstructionParseResult,
+} from './instructions/parse-per-photo.js';
+
 // ---------------------------------------------------------------------------
 // Scene prompt builder
 // ---------------------------------------------------------------------------

@@ -151,11 +151,12 @@ export async function handleSetupStyle(
     imageStorageUrls: [],
     voiceInstructions: null,
     currentOrderId: null,
+    earlyPhotoMediaId: null,
   });
 
   const isFirstOrder = (user.orderCount ?? 0) === 0;
   const photoPrompt = msgSendPhoto(lang, isFirstOrder);
-  await wa.sendText(phoneNumber, `*${styleName}* set!\n\n${photoPrompt}`);
+  await wa.sendText(phoneNumber, `*${styleName}* set! 📸 ${photoPrompt}`);
 
   logger.info('Style selected, awaiting photo', { phoneNumber, styleId });
 }

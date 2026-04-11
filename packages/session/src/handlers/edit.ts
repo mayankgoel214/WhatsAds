@@ -154,6 +154,84 @@ export async function handleAwaitingEdit(
 
   // If we have something to work with, enqueue the edit job
   if (editStyle || editInstructions) {
+    const imageUrls = (order.inputImageUrls as string[]) ?? [];
+
+    // Multi-photo edit: parse per-photo instructions when there are multiple photos
+    if (imageUrls.length > 1 && editInstructions) {
+      try {
+        const { parsePerPhotoInstructions } = await import('@whatsads/ai');
+        const parseResult = await parsePerPhotoInstructions({
+          imageUrls,
+          rawInstructions: editInstructions,
+        });
+
+        if (parseResult.confidence >= 0.4) {
+          const cutoutUrls = (order.cutoutUrls as string[]) ?? [];
+          let jobsCreated = 0;
+
+          for (let i = 0; i < imageUrls.length; i++) {
+            const instruction = parseResult.assignments[String(i)] ?? parseResult.globalInstruction;
+            if (!instruction) continue;
+
+            const editUrl = cutoutUrls[i] || imageUrls[i] || '';
+            if (!editUrl) continue;
+
+            // Only count as 1 revision total (on the first job)
+            if (jobsCreated === 0) {
+              await prisma.order.update({
+                where: { id: order.id },
+                data: {
+                  revisionsUsed: { increment: 1 },
+                  status: 'processing',
+                  processingStartedAt: new Date(),
+                  processingCompletedAt: null,
+                },
+              });
+            }
+
+            const imageJob = await prisma.imageJob.create({
+              data: {
+                id: crypto.randomUUID(),
+                orderId: order.id,
+                inputImageUrl: editUrl,
+                style: editStyle || order.style || 'style_clean_white',
+                status: 'queued',
+              },
+            });
+
+            const imageQueue = getImageQueue();
+            await imageQueue.add('process_image', {
+              orderId: order.id,
+              imageJobId: imageJob.id,
+              phoneNumber: session.phoneNumber,
+              inputImageUrl: editUrl,
+              style: editStyle || order.style || 'style_clean_white',
+              voiceInstructions: instruction,
+              productCategory: order.productCategory ?? undefined,
+              pipeline: cutoutUrls[i] ? 'fallback' : 'primary',
+            });
+
+            jobsCreated++;
+          }
+
+          if (jobsCreated > 0) {
+            await transitionTo(session.phoneNumber, 'EDIT_PROCESSING');
+            await wa.sendText(session.phoneNumber, lang === 'hi'
+              ? `${jobsCreated} photos edit ho rahe hain... thodi der mein ready!`
+              : `Editing ${jobsCreated} photos... ready shortly!`);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn(JSON.stringify({
+          event: 'edit_per_photo_parse_failed',
+          error: err instanceof Error ? err.message : String(err),
+        }));
+        // Fall through to single-photo edit (existing behavior)
+      }
+    }
+
+    // Single-photo edit (fallback or single-photo order)
     await wa.sendText(session.phoneNumber, msgEditProcessing(lang));
 
     // Increment revision count and reset order status to 'processing'
@@ -168,13 +246,17 @@ export async function handleAwaitingEdit(
       },
     });
 
+    // Pick the most recently processed photo (last index) instead of always the first
+    const lastIdx = Math.max(0, imageUrls.length - 1);
+    const editImageUrl = (order.cutoutUrls as string[])?.[lastIdx] || imageUrls[lastIdx] || imageUrls[0] || '';
+
     // Create ImageJob record for the edit
     const editJobId = crypto.randomUUID();
     await prisma.imageJob.create({
       data: {
         id: editJobId,
         orderId: order.id,
-        inputImageUrl: order.cutoutUrls[0] || order.inputImageUrls[0] || '',
+        inputImageUrl: editImageUrl,
         style: editStyle || order.style || 'style_clean_white',
         status: 'queued',
       },
@@ -186,11 +268,11 @@ export async function handleAwaitingEdit(
       orderId: order.id,
       imageJobId: editJobId,
       phoneNumber: session.phoneNumber,
-      inputImageUrl: order.cutoutUrls[0] || order.inputImageUrls[0] || '',
+      inputImageUrl: editImageUrl,
       style: editStyle || order.style || 'style_clean_white',
       voiceInstructions: editInstructions ?? undefined,
       productCategory: order.productCategory ?? undefined,
-      pipeline: order.cutoutUrls.length > 0 ? 'fallback' : 'primary',
+      pipeline: (order.cutoutUrls as string[])?.[lastIdx] ? 'fallback' : 'primary',
     });
 
     await transitionTo(session.phoneNumber, 'EDIT_PROCESSING');

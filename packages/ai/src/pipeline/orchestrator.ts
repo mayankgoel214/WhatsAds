@@ -290,6 +290,7 @@ export async function processProductImage(
     // QA check — fidelity matters for Track A and Track S (both preserve real product pixels)
     const qa = await combinedQualityCheck(processedBuffer, adBuffer, {
       checkFidelity: useTrackA || useInpainting,
+      voiceInstructions: params.voiceInstructions,
     });
     lastQaResult = qa;
 
@@ -404,7 +405,7 @@ export async function processProductImage(
 
   if (fallbackBuffer) {
     // Quick QA on Bria output (no fidelity check — Bria handles product internally)
-    const briaQa = await combinedQualityCheck(processedBuffer, fallbackBuffer, { checkFidelity: false });
+    const briaQa = await combinedQualityCheck(processedBuffer, fallbackBuffer, { checkFidelity: false, voiceInstructions: params.voiceInstructions });
 
     if (briaQa.pass && !briaQa.hasFundamentalError) {
       const outputUrl = await uploadToStorage(fallbackBuffer, `output_${Date.now()}.jpg`);

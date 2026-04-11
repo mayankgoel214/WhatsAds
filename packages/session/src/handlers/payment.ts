@@ -163,8 +163,71 @@ export async function enqueueImageJobs(
   order: Order,
 ): Promise<void> {
   const imageQueue = getImageQueue();
+  const imageUrls = order.inputImageUrls as string[];
+  const rawInstructionsFromOrder = order.voiceInstructions as string | null;
 
-  for (const url of order.inputImageUrls) {
+  console.info(JSON.stringify({
+    event: 'enqueue_image_jobs_start',
+    orderId,
+    imageCount: imageUrls.length,
+    hasInstructions: !!rawInstructionsFromOrder,
+    rawInstructions: rawInstructionsFromOrder?.slice(0, 100),
+  }));
+
+  // --- Per-photo instruction parsing ---
+  let perPhotoInstructions: Record<string, string | null> = {};
+  let globalInstruction: string | null = null;
+  const rawInstructions = order.voiceInstructions as string | null;
+
+  if (imageUrls.length > 1 && rawInstructions) {
+    try {
+      const { parsePerPhotoInstructions } = await import('@whatsads/ai');
+      const parseResult = await parsePerPhotoInstructions({
+        imageUrls: imageUrls,
+        rawInstructions,
+      });
+
+      if (parseResult.confidence >= 0.4) {
+        perPhotoInstructions = parseResult.assignments;
+        globalInstruction = parseResult.globalInstruction;
+        logger.info('Per-photo instructions parsed', {
+          orderId,
+          confidence: parseResult.confidence,
+          assignmentCount: Object.values(parseResult.assignments).filter(v => v !== null).length,
+          hasGlobal: !!parseResult.globalInstruction,
+        });
+      } else {
+        logger.info('Per-photo instructions low confidence', {
+          orderId,
+          confidence: parseResult.confidence,
+        });
+      }
+    } catch (err) {
+      logger.warn('Per-photo instructions parsing failed', {
+        orderId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      // Fall back to raw instructions for all photos
+    }
+  }
+
+  for (let i = 0; i < imageUrls.length; i++) {
+    const url = imageUrls[i]!;
+
+    // Build per-photo instruction: specific + global merged
+    const specificInstruction = perPhotoInstructions[String(i)] ?? null;
+    let finalInstruction: string | undefined;
+
+    if (specificInstruction && globalInstruction) {
+      finalInstruction = `${specificInstruction}. ${globalInstruction}`;
+    } else if (specificInstruction) {
+      finalInstruction = specificInstruction;
+    } else if (globalInstruction) {
+      finalInstruction = globalInstruction;
+    } else {
+      finalInstruction = rawInstructions ?? undefined;
+    }
+
     const imageJob = await prisma.imageJob.create({
       data: {
         orderId,
@@ -180,7 +243,7 @@ export async function enqueueImageJobs(
       phoneNumber,
       inputImageUrl: url,
       style: order.style ?? 'style_clean_white',
-      voiceInstructions: order.voiceInstructions ?? undefined,
+      voiceInstructions: finalInstruction,
       productCategory: order.productCategory ?? undefined,
       pipeline: 'primary',
     });

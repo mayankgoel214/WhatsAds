@@ -200,11 +200,19 @@ export async function processProductImageV3(
   let generationBuffer = baseGenBuffer;
   if (Math.abs(genW - genH) / Math.max(genW, genH) > 0.05) {
     const maxDim = Math.max(genW, genH);
+    const padColor = (() => {
+      switch (params.style) {
+        case 'style_gradient': return { r: 0, g: 0, b: 0, alpha: 1 };      // black for dark luxury
+        case 'style_minimal': return { r: 240, g: 240, b: 240, alpha: 1 };  // off-white for minimal
+        case 'style_festive': return { r: 30, g: 20, b: 10, alpha: 1 };     // warm dark for festive
+        default: return { r: 255, g: 255, b: 255, alpha: 1 };               // white for everything else
+      }
+    })();
     generationBuffer = await sharp(baseGenBuffer)
-      .resize(maxDim, maxDim, { fit: 'contain', background: { r: 255, g: 255, b: 255, alpha: 1 } })
+      .resize(maxDim, maxDim, { fit: 'contain', background: padColor })
       .jpeg({ quality: 92 })
       .toBuffer();
-    console.info(JSON.stringify({ event: 'v3_squared_input', from: `${genW}x${genH}`, to: `${maxDim}x${maxDim}` }));
+    console.info(JSON.stringify({ event: 'v3_squared_input', from: `${genW}x${genH}`, to: `${maxDim}x${maxDim}`, padColor: params.style }));
   }
 
   // -------------------------------------------------------------------------
@@ -255,6 +263,29 @@ export async function processProductImageV3(
   // -------------------------------------------------------------------------
 
   const validPlan = plan;
+
+  // Filter inappropriate dynamic elements based on product category
+  function filterDynamicElements(elements: string[], category: string, isColdBeverage: boolean): string[] {
+    const waterKeywords = /water|splash|liquid|pour|drip|rain|ocean|wave|wet|mist|fog|steam|condensation|dew/i;
+    const fireKeywords = /fire|flame|burn|ignite|spark|ember/i;
+
+    return elements.filter(el => {
+      // Allow water for cold beverages even if category isn't 'food'
+      if (!isColdBeverage && !['food'].includes(category) && waterKeywords.test(el)) {
+        console.info(JSON.stringify({ event: 'dynamic_element_filtered', element: el, reason: 'water_not_allowed', category }));
+        return false;
+      }
+      // No fire for electronics, skincare, garments
+      if (['electronics', 'skincare', 'garment'].includes(category) && fireKeywords.test(el)) {
+        console.info(JSON.stringify({ event: 'dynamic_element_filtered', element: el, reason: 'fire_not_allowed', category }));
+        return false;
+      }
+      return true;
+    });
+  }
+
+  validPlan.dynamicElements = filterDynamicElements(validPlan.dynamicElements, validPlan.productCategory, validPlan.isColdBeverage);
+
   const fillPct = Math.round((validPlan.recommendedCanvasFill ?? 0.6) * 100);
   const isSmall = validPlan.productPhysicalSize === 'tiny' || validPlan.productPhysicalSize === 'small';
   const productName = validPlan.analysis.productName;
@@ -292,20 +323,38 @@ export async function processProductImageV3(
       : '';
 
     const allowCondensation = validPlan.isColdBeverage ||
-      ['food_beverage', 'beverage'].includes(validPlan.productCategory) ||
-      /bottle|tumbler|flask|cup|glass|can|drink/i.test(validPlan.analysis?.productType ?? '');
+      validPlan.productCategory === 'food' ||
+      /bottle|tumbler|flask|cup|glass|can|drink|beverage/i.test(validPlan.analysis?.productType ?? '');
+
+    // Broader check: should ANY water/splash/liquid effects appear ANYWHERE in the scene?
+    // Products like jewellery, electronics, garments, candles should never have water near them.
+    const allowWaterEffects = validPlan.isColdBeverage ||
+      validPlan.productCategory === 'food' ||
+      /bottle|tumbler|flask|cup|glass|can|drink|beverage|water|juice|soda|beer|wine|milk|shake|smoothie|coffee|tea|lassi|chai|nimbu|coconut|mug|thermos|kettle|pitcher|carafe|jug/i.test(validPlan.analysis?.productType ?? '') ||
+      /bottle|tumbler|flask|cup|glass|can|drink|beverage/i.test(productName ?? '');
 
     const isLifestyle = params.style === 'style_lifestyle';
     const isOutdoor = params.style === 'style_outdoor';
 
+    const userInstructionBlock = params.voiceInstructions
+      ? `\nUSER'S REQUEST (apply ONLY what is relevant to the product in this photo):
+"${params.voiceInstructions.slice(0, 300)}"
+IMPORTANT: This instruction may reference MULTIPLE products from different photos (e.g., "bag ko pink, watch ko gold"). Only follow the part that applies to the product shown in the input photo. If the instruction mentions a product that is NOT the product in this photo, IGNORE that part completely. Do NOT add other products (remotes, glasses, bags, etc.) to this image just because they are mentioned in the instruction. Each photo contains only ONE product — keep it that way.\n`
+      : '';
+
+    const colorEnforcement = validPlan.analysis?.dominantColors?.length
+      ? `The product's colors are: ${validPlan.analysis.dominantColors.join(', ')}. These colors MUST be preserved exactly — do not shift gold to silver, do not desaturate warm tones, do not change the material color under any lighting condition.`
+      : '';
+
     return `${getCameraSpec(params.style ?? 'style_lifestyle')}
 
 A photograph of a product advertisement. Edge-to-edge composition, no borders or frames. Exactly one product instance.${params.style !== 'style_with_model' ? ' No people, hands, or body parts anywhere.' : ''} The product from the input photo fills ${isSmall ? 'the majority of the frame in tight macro' : (isLifestyle || isOutdoor ? '40-50%' : fillPct + '%')} of the frame.
+${userInstructionBlock}
 ${warningBlock}
 ${validPlan.creativeBrief}
 ${heroDynamic}
 
-Product: ${productName}.${componentsList} Every logo, text, and brand mark preserved exactly as in the input photo.${!allowCondensation ? ' Product surface is completely dry — no water or condensation.' : ''}
+Product: ${productName}.${componentsList} ${colorEnforcement} Every logo, text, and brand mark preserved exactly as in the input photo.${!allowCondensation ? ' Product surface is completely dry — no water or condensation.' : ''}${!allowWaterEffects ? '\nNo water, liquid, splashes, droplets, or moisture anywhere in the scene. This product has nothing to do with water or liquids.' : ''}
 
 The product shows real material properties — packaging catches light with specular highlights, surfaces have micro-texture at full resolution. The product looks PHOTOGRAPHED, not rendered.${params.style === 'style_with_model' ? `
 
@@ -463,7 +512,7 @@ One Indian/South Asian person actively using the product. Natural features: visi
     adBuffer = await addAILabel(adBuffer);
 
     // ------- LAYER 1: Focused AI Binary Checks (~2s) -------
-    lastFocused = await runFocusedChecks(processedBuffer, adBuffer, productName);
+    lastFocused = await runFocusedChecks(processedBuffer, adBuffer, productName, params.voiceInstructions);
 
     console.info(JSON.stringify({
       event: 'v3_layer1_complete',
@@ -503,6 +552,7 @@ One Indian/South Asian person actively using the product. Natural features: visi
     // ------- LAYER 2: AI Quality Scoring -------
     qaResult = await combinedQualityCheck(processedBuffer, adBuffer, {
       checkFidelity: true,
+      voiceInstructions: params.voiceInstructions,
     });
 
     console.info(JSON.stringify({
@@ -537,12 +587,15 @@ Make ONLY this fix. Do not change the overall scene, composition, dynamic elemen
           generatedImageBuffer: adBuffer,
           prompt: fixPrompt,
         });
-        adBuffer = await postProcessFinal(fixed.imageBuffer, params.style);
-        adBuffer = await addAILabel(adBuffer);
 
-        // Re-check border after edit
-        const editBorder = await detectAndCropBorder(adBuffer);
-        if (editBorder.cropped) adBuffer = editBorder.buffer;
+        // After surgical edit, re-check borders FIRST (before label so crop doesn't remove it)
+        const editBorder = await detectAndCropBorder(fixed.imageBuffer);
+        let editedBuffer = editBorder.cropped ? editBorder.buffer : fixed.imageBuffer;
+
+        // THEN post-process and label
+        editedBuffer = await postProcessFinal(editedBuffer, params.style);
+        editedBuffer = await addAILabel(editedBuffer);
+        adBuffer = editedBuffer;
 
         const recheck = await runDeterministicChecks(processedBuffer, adBuffer);
         if (!recheck.pass) {
@@ -550,7 +603,7 @@ Make ONLY this fix. Do not change the overall scene, composition, dynamic elemen
           break;
         }
 
-        const recheckFocused = await runFocusedChecks(processedBuffer, adBuffer, productName);
+        const recheckFocused = await runFocusedChecks(processedBuffer, adBuffer, productName, params.voiceInstructions);
         if (!recheckFocused.pass) {
           adBuffer = preEditBuffer;
           break;
@@ -592,38 +645,26 @@ Make ONLY this fix. Do not change the overall scene, composition, dynamic elemen
   }
 
   // -------------------------------------------------------------------------
-  // Stage 7+8: Upload + Video + Story in parallel
+  // Stage 7: Upload only — video and story generation disabled for now
   // -------------------------------------------------------------------------
 
-  const [outputUrl, videoResult, storyResult] = await Promise.all([
+  // Video and story generation disabled for now
+  const [outputUrl] = await Promise.all([
     uploadToStorage(adBuffer, `output_${Date.now()}.jpg`).catch(async (uploadErr) => {
       console.error(JSON.stringify({ event: 'v3_upload_failed_retry', error: uploadErr instanceof Error ? uploadErr.message : String(uploadErr) }));
       await new Promise(r => setTimeout(r, 2000));
       return uploadToStorage(adBuffer!, `output_${Date.now()}.jpg`);
     }),
-    generateKenBurnsVideo(adBuffer, {
-      productCategory: validPlan.productCategory,
-      durationSec: 5,
-    }).catch(err => {
-      console.warn(JSON.stringify({ event: 'v3_video_failed', error: err instanceof Error ? err.message : String(err) }));
-      return null;
-    }),
-    generateStoryFormat(adBuffer, params.style)
-      .then(buf => uploadToStorage(buf, `story_${Date.now()}.jpg`))
-      .catch(() => undefined as string | undefined),
+    // generateKenBurnsVideo disabled
+    // generateStoryFormat disabled
   ]);
 
   let videoUrl: string | undefined;
-  if (videoResult) {
-    try {
-      videoUrl = await uploadToStorage(videoResult.videoBuffer, `video_${Date.now()}.mp4`, 'video/mp4');
-      console.info(JSON.stringify({
-        event: 'v3_video_complete',
-        effect: videoResult.effect,
-        durationMs: videoResult.durationMs,
-      }));
-    } catch { /* video upload optional */ }
-  }
+  // Video generation disabled — videoUrl stays undefined
+  // if (videoResult) { ... }
+
+  const storyResult: string | undefined = undefined;
+  // Story generation disabled — storyResult stays undefined
 
   console.info(JSON.stringify({
     event: 'v3_pipeline_complete',

@@ -34,6 +34,38 @@ export async function handleIdle(
 
   logger.info('handleIdle called', { phoneNumber: session.phoneNumber, isReturning, lastStyleUsed: user.lastStyleUsed, lang });
 
+  // Handle button replies from returning user style confirmation
+  // This prevents an infinite loop where button taps re-enter handleIdle in IDLE state
+  if (message.messageType === 'interactive' && message.buttonReplyId) {
+    const buttonId = message.buttonReplyId;
+
+    if (buttonId === ButtonIds.SAME_STYLE && user.lastStyleUsed) {
+      // Use the same style — transition to AWAITING_PHOTO
+      await transitionTo(session.phoneNumber, 'AWAITING_PHOTO', {
+        styleSelection: user.lastStyleUsed,
+        imageMediaIds: [],
+        imageStorageUrls: [],
+        voiceInstructions: null,
+        currentOrderId: null,
+        earlyPhotoMediaId: null,
+      });
+      const styleName = styleDisplayName(user.lastStyleUsed, lang);
+      await wa.sendText(session.phoneNumber, lang === 'hi'
+        ? `${styleName} set! 📸 Photo bhejiye!`
+        : `${styleName} set! 📸 Send your photo!`);
+      return;
+    }
+
+    if (buttonId === ButtonIds.NEW_STYLE || buttonId === 'try_new_style') {
+      // Show style list
+      await transitionTo(session.phoneNumber, 'SETUP_STYLE', {
+        earlyPhotoMediaId: null,
+      });
+      await sendStyleList(session.phoneNumber, lang, wa, user.businessType ?? undefined);
+      return;
+    }
+  }
+
   if (isReturning) {
     // --- Returning user with saved style: confirm ---
     if (user.lastStyleUsed) {
