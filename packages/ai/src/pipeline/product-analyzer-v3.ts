@@ -236,41 +236,41 @@ const STYLE_NARRATIVE_POOLS: Record<string, Record<string, string[]>> = {
 
   style_with_model: {
     food: [
-      `CAUGHT IN THE ACT OF ENJOYING — PERSON IS MANDATORY. Think about HOW this specific food is eaten and show THAT moment. Chips/snacks: person reaching into the bag, one chip near mouth, satisfied crunch expression. Cookies/sweets: person biting into one, eyes closed in satisfaction, crumbs on fingers. Drinks/beverages: person HOLDING the sealed product (cap ON) near face level, showing anticipation. If the product has a cap or lid in the input photo, it MUST remain attached — do NOT show the product open, mid-sip, or uncapped. Spices/cooking ingredients: person cooking, tasting from a spoon, steam rising. Protein bars/health food: person in gym clothes, post-workout, unwrapping it. The product AND its packaging must be clearly visible. NOT a posed smile — a REAL moment of enjoyment. Warm light, shallow DOF, contextual environment matching how the food is consumed.`,
+      `MID-BITE CRAVING — PERSON IS MANDATORY. Freeze the EXACT ACTION MOMENT of consuming this food. Chips/snacks: person mid-crunch, chip between teeth, eyes squeezed shut in flavor ecstasy, crumbs falling from fingers. Cookies/sweets: person caught mid-bite, a crescent bitten out, melted chocolate on fingertips, tongue savoring. Drinks/beverages: person HOLDING the sealed product (cap ON) near face level, tilting it toward lips with eager anticipation, fingers wrapped tight around the cold surface. If the product has a cap or lid in the input photo, it MUST remain attached — do NOT show the product open, mid-sip, or uncapped. Spices/cooking ingredients: person mid-stir at a sizzling pan, tasting from a wooden spoon with raised eyebrows, steam curling around their face. Protein bars/health food: person mid-unwrap at the gym bench, tearing the wrapper with teeth, post-workout flush on face. The product AND its packaging must be clearly visible. Props that match the product's ingredients scattered on the surface nearby. NOT a posed smile — a REAL frozen action. Warm light, shallow DOF, contextual environment matching how the food is consumed.`,
     ],
     skincare: [
-      `BEAUTY RITUAL IN ACTION — PERSON IS MANDATORY. Show the EXACT moment of using THIS specific product. Serum: person applying drops to face with the dropper, dewy skin glowing. Face cream: fingertips scooping from the jar, mid-application on cheek. Face wash: person at sink, foam on face, eyes closed. Sunscreen: person applying on arm/face before going outside. Lip product: person applying in front of mirror. Hair oil: person working it through hair. The product container MUST be prominently visible — either in hand or placed nearby on the vanity. Soft bathroom/vanity light. The viewer thinks "I want that glow."`,
+      `MID-APPLICATION GLOW — PERSON IS MANDATORY. Freeze the EXACT ACTION of applying THIS product. Serum: person mid-squeeze of the dropper, golden drops falling toward fingertips, other hand touching dewy cheek, caught between steps. Face cream: fingertips mid-dab on cheekbone, product jar open nearby, a visible smear trail showing the motion of application. Face wash: person mid-lather at the sink, foam between palms being worked up, water droplets on mirror. Sunscreen: person mid-squeeze onto forearm, outdoors with hat and sunglasses pushed up. Lip product: person mid-swipe across lips in a compact mirror, one eye checking the application. Hair oil: person mid-massage at the scalp, fingers threaded through hair, oil bottle balanced on the counter. The product container MUST be prominently visible — either in hand or placed nearby on the vanity with ingredient-matching props (rose petals for rose products, aloe leaf for aloe products). Soft bathroom/vanity light. The viewer thinks "I want that glow."`,
     ],
     jewellery: [
-      `ADORNED ELEGANCE — PERSON IS MANDATORY. Show the intimate moment of WEARING this jewelry. Necklace: Indian woman touching it at collarbone, looking down admiringly, tight crop collarbone-to-chin. Earrings: side profile or 3/4 view, tucking hair behind ear to reveal the earring. Ring: hand resting on a surface, ring catching light, or adjusting it. Bracelet/bangles: wrist visible while pouring chai or arranging flowers. The jewelry MUST be the brightest, sharpest element — hard accent light creating sparkle on gems. Soft key light on skin. Warm skin tones. Confidence, desire, beauty.`,
+      `GETTING-READY MOMENT — PERSON IS MANDATORY. Freeze the intimate ACTION of putting on or admiring this jewelry. Necklace: Indian woman mid-clasp behind her neck, looking into a vanity mirror, catching the first glimpse of it on — fingers still at the clasp, slight smile of satisfaction. Earrings: person mid-thread through earlobe, head tilted, one hand holding hair back, the other guiding the earring in — mirror reflecting the moment. Ring: person mid-slide onto finger, hand held up to catch the light, admiring it with parted lips. Bracelet/bangles: person mid-stack on wrist, pushing one bangle past knuckles, the others already jingling. Anklet: person leaning to fasten at ankle, dupatta draped, seated on a cushion. The jewelry MUST be the brightest, sharpest element — hard accent light creating sparkle on gems. Velvet fabric or jewelry box nearby as a prop. Soft key light on skin. Warm skin tones. Confidence, desire, beauty.`,
     ],
     electronics: [
-      `IN THE ZONE — PERSON IS MANDATORY. Show the person ACTIVELY USING this specific device in its natural context. Headphones/earbuds: person with eyes closed, lost in music, slight head bob. Phone: person scrolling with a soft smile, screen glow on face. Speaker: person in living room, dancing or swaying to music. Fitness tracker/watch: person mid-workout, glancing at wrist. Laptop: person typing intently at a café, coffee nearby. Power bank: person charging phone at airport, waiting. Keyboard/mouse: person gaming or working, focused expression. The product enabling a genuine MOMENT. Warm-cool light contrast, shallow DOF.`,
+      `CAUGHT IN ACTIVE USE — PERSON IS MANDATORY. Freeze the person MID-ACTION with this device. Headphones/earbuds: person mid-head-bob with eyes closed, one hand adjusting the earbud, mouth slightly open humming along, caught in a groove. Phone: person mid-swipe showing something exciting to a friend, both leaning in, screen glow on faces. Speaker: person mid-dance-move in their living room, arms up, speaker on the shelf behind with visible sound vibration. Fitness tracker/watch: person mid-sprint, glancing at wrist mid-stride, sweat flying, caught in explosive motion. Laptop: person mid-type leaning forward with focused intensity, coffee cup mid-lift in other hand. Power bank: person mid-plug at an airport gate, phone charging, looking up at the departure board. Keyboard/mouse: person mid-clutch-play, leaning into the screen, fingers hovering over keys. The product enabling a genuine ACTION MOMENT — not posing, DOING. Warm-cool light contrast, shallow DOF.`,
     ],
     garment: [
-      `WEARING IT AND LIVING IN IT — PERSON IS MANDATORY. Show the person in this garment caught in a REAL MOMENT of their life — not a fashion pose. Casual wear: person laughing with friends, walking on street, grabbing coffee. Ethnic wear (kurti/saree/lehenga): person adjusting dupatta, walking through a doorway, touching jewelry. Formal wear: person adjusting cuff, walking confidently, at a restaurant. Gym/activewear: person mid-exercise, stretching, running. Fabric catching natural movement — a slight breeze, a turn, a step. Blurred lifestyle background. Confidence and ease.`,
+      `CAUGHT IN MOTION — PERSON IS MANDATORY. Freeze the person MID-MOVEMENT in this garment — fabric must be visibly in motion. Casual wear: person mid-stride on a street, one foot forward, hair caught by wind, turning to laugh at someone off-camera, coffee cup in hand. Ethnic wear (kurti/saree/lehenga): person mid-twirl in a courtyard, dupatta flying outward in an arc, fabric caught in a beautiful spiral, bangles mid-jingle on raised wrists. Formal wear: person mid-button of a cuff while striding through a lobby, jacket flaring with the movement, confident head-turn. Gym/activewear: person mid-jump or mid-lunge, fabric stretching with the body, sweat droplets frozen mid-flight. Every shot MUST show fabric in motion — a ripple, a flutter, a stretch, a drape caught by movement. Blurred lifestyle background. The garment is the hero because it moves beautifully. Confidence and dynamism.`,
     ],
     candle: [
-      `COZY MOMENT — PERSON IS MANDATORY. Show an Indian person in a cozy evening moment WITH the lit candle. Person curled up reading a book on the couch, candle glowing on the side table. Or person meditating with eyes closed, candle in foreground blur. Or person taking a relaxing bath, candle on the tub edge. The candle flame creates the warm ambient glow. Person looks peaceful, content, present. The viewer wants this exact evening.`,
+      `LIGHTING THE FLAME — PERSON IS MANDATORY. Freeze the EXACT MOMENT of the ritual with this candle. Person mid-strike of a match, the flame just catching the wick, eyes focused on the tiny fire, a curl of first smoke rising. Or: person mid-lean to blow out the candle, cheeks puffed, wax pool glowing amber, smoke about to billow. Or: person mid-pour of wine into a glass beside the lit candle, the flame's reflection dancing in the glass. The candle flame IS the warm ambient light source. Scent-matching props nearby — dried lavender, cinnamon sticks, orange peel, eucalyptus — whatever matches THIS candle's fragrance. Person looks present, intentional, savoring. The viewer wants this exact ritual.`,
     ],
     bag: [
-      `ON THE MOVE — PERSON IS MANDATORY. Show the person CARRYING this bag in a real-life context. Backpack: person walking through a campus or hiking trail, looking over shoulder. Handbag: person walking in a market or café, bag on shoulder, reaching for something. Travel bag: person at airport, pulling it, with boarding pass visible. Laptop bag: person entering an office, bag slung over shoulder, coffee in hand. Clutch: person at an evening event, holding it while laughing. The bag is the style statement. Motion, energy, aspiration.`,
+      `CAUGHT IN TRANSIT — PERSON IS MANDATORY. Freeze the person MID-ACTION with this bag, not just carrying it. Backpack: person mid-swing of the bag onto one shoulder, turning toward a campus building, one strap caught mid-air. Handbag: person mid-rummage inside the bag at a market stall, pulling out a wallet, other hand pointing at something to buy. Travel bag: person mid-pull through an airport terminal, boarding pass between teeth, phone in other hand checking gates. Laptop bag: person mid-exit from a cab, one foot on the curb, bag strap across chest, coffee balanced in hand. Clutch: person mid-laugh at an evening event, clutch tucked under arm, champagne glass raised mid-toast. The bag is integrated into a REAL action, not just slung on a shoulder. Motion, energy, aspiration.`,
     ],
     default: [
-      `PERSON USING THIS PRODUCT IS MANDATORY — AN IMAGE WITHOUT A PERSON IS A FAILURE FOR THIS STYLE.
+      `PERSON ACTIVELY USING THIS PRODUCT IS MANDATORY — AN IMAGE WITHOUT A PERSON MID-ACTION IS A FAILURE FOR THIS STYLE.
 
-Think creatively about HOW this specific product is used in real life, and show THAT exact moment:
-- Perfume/fragrance: person spraying on wrist or neck, eyes closed savoring the scent, dresser/mirror behind
-- Dumbbells/gym equipment: person mid-exercise with the equipment, sweat, gym environment
-- Water bottle: person drinking after a run, wiping sweat
-- Notebook/stationery: person writing, café setting, pen in hand
-- Kitchenware: person cooking with it, steam rising, ingredients around
-- Toys: child playing with it, joy on face, living room floor
-- Tools: person using the tool, workshop environment
-- Home decor: person arranging it on a shelf, stepping back to admire
-- Sunglasses: person wearing them outdoors, golden hour light
+Freeze the EXACT MOMENT of using this product — not holding it, not posing with it, but CAUGHT IN THE ACT:
+- Perfume/fragrance: person mid-spray on wrist, mist frozen in air, eyes closing as the first note hits, dresser mirror reflecting the bottle
+- Dumbbells/gym equipment: person mid-rep, muscles engaged, sweat frozen mid-drip, exhale visible, gym environment
+- Water bottle: person mid-gulp after a run, head tilted back, water droplets on chin, chest heaving
+- Notebook/stationery: person mid-sketch, pen pressed to page creating a visible line, brow furrowed in concentration, cafe latte untouched
+- Kitchenware: person mid-flip of food in a pan, ingredients airborne, steam billowing, apron splattered
+- Toys: child mid-build or mid-play, tongue out in concentration, pieces scattered, creation taking shape
+- Tools: person mid-use, sawdust flying, grip tight, protective gear on, workshop environment
+- Home decor: person mid-place on a shelf, stepping back with head tilted, one hand on hip judging the arrangement
+- Sunglasses: person mid-slide onto face, one arm still extended, golden hour light catching the lens
 
-The scene must match WHERE and HOW the product is naturally used. The person's expression must match the EMOTION of using it (satisfaction, focus, joy, confidence, relaxation). The product MUST be clearly visible and recognizable. Candid asymmetric expression. Shallow DOF. The person provides context and aspiration.`,
+Every scene must show a FROZEN ACTION MOMENT — the split second of doing, not the static pose of having done. Include 2-3 props that relate to the product's use case. The person's expression must match the ACTION (effort, concentration, delight, satisfaction). The product MUST be clearly visible and recognizable. Candid asymmetric expression. Shallow DOF. The person provides context and aspiration.`,
     ],
     beverage_cold: [
       `ENERGY CRACK — PERSON IS MANDATORY. A confident young person grips the COLD can firmly, caught mid-crack of opening it — the tab pulled back with a satisfying pop, eyes bright and alert, expression radiating energy and readiness. The can surface is beaded with condensation. NOT a serene savoring pose — this person is CHARGED UP and ready to go. Gym bag or outdoor background in shallow DOF. The can label faces camera.`,
@@ -517,6 +517,32 @@ If this product is a cold beverage (isColdBeverage = true), ALL of the following
 - The emotional trigger MUST be "energy", "freshness", "excitement", or "power" — NEVER "warmth", "comfort", or "serenity"
 
 ## RULES FOR THE CREATIVE BRIEF:
+
+- PRODUCT-RELEVANT PROPS: The scene MUST include 2-3 props that directly relate to the product's ingredients, flavor, use case, or category. Examples:
+  * Energy drink with peach flavor → fresh peach slices, peach-colored elements, ice cubes
+  * Coffee product → coffee beans scattered, steam, warm mug nearby
+  * Skincare with rose → rose petals, pink tones, dewy leaves
+  * Chocolate snack → cocoa powder dusted, broken chocolate pieces, rich brown tones
+  * Jewellery → velvet fabric, soft bokeh lights, reflective surfaces
+  * Fitness product → gym equipment, sweat towel, water splash
+  The props should feel like they BELONG in the scene, not randomly placed. They should reinforce what the product IS and what it DOES.
+
+- BRAND COLOR HARMONY: Identify the product's dominant brand colors from the input photo. The scene's color palette should COMPLEMENT these colors:
+  * Use the brand's accent color in props, lighting gels, or background elements
+  * If the product has warm tones (orange, red, gold), use warm scene lighting
+  * If the product has cool tones (blue, green, silver), use cool scene lighting
+  * The product should VISUALLY POP against the scene — use complementary colors for contrast
+
+- DYNAMIC ELEMENTS must be PRODUCT-SPECIFIC, not generic:
+  * Beverage → splashes of the actual liquid color, ice cubes, condensation, the drink being poured
+  * Food → ingredients floating/scattered (the actual ingredients listed on the package), crumbs, steam
+  * Skincare → product texture swirl, dewy droplets, flower petals matching the scent
+  * Perfume → mist cloud, fragrance notes as visual elements (roses, vanilla, wood)
+  * Electronics → light trails, digital particles, connectivity waves
+  * Jewellery → light refractions, sparkle points, soft fabric flow
+  * Candles → warm smoke wisps, melted wax drips, flame glow on surroundings
+  DO NOT use generic mist/fog. Every dynamic element must connect to what the product IS.
+
 CRITICAL CONSTRAINT FOR CREATIVE BRIEF: The creative brief must NEVER describe the product differently from how it appears in the input photo. Do not invent details, simplify the product, or change its design. The brief should describe the SCENE and ENVIRONMENT around the product, not redesign the product itself. Every physical detail of the product (shape, color, material, components, text) must remain exactly as photographed.
 - CONDENSATION/WATER DROPLETS: Only add condensation, water droplets, or dewy surfaces if the product is a BEVERAGE CONTAINER (bottle, tumbler, can, glass) or a FOOD/DRINK product. For ALL other product categories (jewellery, electronics, candles, bags, garments, skincare, home decor), the product surface must remain DRY. Do not add water droplets to products that would never be wet in real life.
 - EXACTLY ONE product in the image — NEVER duplicate or clone

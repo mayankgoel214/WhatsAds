@@ -302,6 +302,14 @@ export async function handleAwaitingPhoto(
     return;
   }
 
+  // ---- Text with no photos yet — guide the user ----
+  if (message.messageType === 'text' && session.imageStorageUrls.length === 0) {
+    await wa.sendText(phoneNumber, lang === 'hi'
+      ? 'Pehle ek photo bhejein! 📸 Phir "done" bolein.'
+      : 'Send a photo first! 📸 Then say "done".');
+    return;
+  }
+
   // ---- No photos yet and non-image message ----
   // Don't confuse users with error messages right after entering this state
   // (can be triggered by delayed/racing messages from previous state)
