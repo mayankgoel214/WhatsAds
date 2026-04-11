@@ -128,10 +128,10 @@ const STYLE_NARRATIVE_POOLS: Record<string, Record<string, string[]>> = {
 
   style_gradient: {
     food: [
-      `SINFUL INDULGENCE. Techniques: INGREDIENT EXPLOSION + DARK REFLECTIVE SURFACE + DUAL RIM LIGHTING. Pitch black background. Product on polished black acrylic creating a mirror reflection below. Raw ingredients EXPLODING outward from the product — nuts, chocolate shards, fruit slices, spice particles frozen mid-air in the rim light. Two strip softbox rim lights from behind-left and behind-right creating razor-sharp glowing edges. Dust particles and powder caught floating in the light beams.`,
+      `SINFUL INDULGENCE. Techniques: INGREDIENT EXPLOSION + DARK REFLECTIVE SURFACE + DUAL RIM LIGHTING. Pitch black background. Product on polished black acrylic creating a mirror reflection below. One frozen moment: a single ingredient piece mid-fall beside the product, caught in hard rim light from behind. Polished black surface with mirror reflection. Everything else is darkness and stillness.`,
       `FROZEN POUR. Techniques: LIQUID SPLASH + HARD OVERHEAD SPOTLIGHT + DARK VOID. Dark void background. A liquid pour — milk, honey, chocolate sauce — frozen mid-cascade over the product from directly above. Single hard spotlight from overhead catches every droplet in crystalline detail. The liquid crown splash is the hero element. Wet surface below with authentic splash scatter.`,
       `SMOKE AND HEAT. Techniques: BLACK MARBLE + RISING STEAM + AMBER UNDERLIGHTING. Product on black marble surface. Steam or smoke rising from behind and around the product, caught in warm amber accent light coming from below and behind. The steam creates depth layers against the darkness. Surface shows authentic condensation. Moody, sultry, indulgent.`,
-      `LEVITATION BEAM. Techniques: SPOTLIGHT CONE + SUSPENDED INGREDIENTS + DUST PARTICLES. Dark gradient background. Product at center with its key ingredients levitating in a tight cone of hard spotlight — frozen mid-air as if gravity paused. Fine dust particles caught in the beam creating visible light rays. Everything outside the cone is pitch black. Dramatic, theatrical, otherworldly.`,
+      `LEVITATION BEAM. Techniques: SPOTLIGHT CONE + SINGLE SUSPENDED ELEMENT. Dark gradient background. Product at center with one key ingredient piece suspended above it in a tight cone of hard spotlight. Everything outside the cone is pitch black. Dramatic, theatrical, otherworldly.`,
       `WET OBSIDIAN. Techniques: WET BLACK SURFACE + CONDENSATION + COOL RIM LIGHT. Product on wet black obsidian surface, beaded with condensation droplets — each one a tiny lens reflecting the product. Single cool blue-white rim light from behind creating a sharp edge glow. The wet surface reflects the product in a dark, distorted mirror. Cold, refreshing, premium.`,
     ],
     default: [
@@ -157,9 +157,9 @@ const STYLE_NARRATIVE_POOLS: Record<string, Record<string, string[]>> = {
     default: [
       `DIWALI CELEBRATION. Techniques: BRASS THALI + LIT DIYAS + GOLDEN BOKEH. Product on embroidered silk atop a brass thali. Lit diyas flanking the product as primary warm light sources creating golden pools. Scattered marigold petals catching the warm glow. Golden fairy light bokeh at 3+ different depths behind. Celebration, warmth, tradition.`,
       `RANGOLI SPLENDOR. Techniques: RANGOLI PATTERN + SILK DRAPE + OVERHEAD DIYA GLOW. Product placed on a richly colored rangoli pattern surface, with a flowing silk fabric draping softly at one edge. Warm overhead glow from multiple diyas positioned at varying heights. Scattered flower petals — marigold and rose — creating organic color accents. Vibrant, joyful, deeply cultural.`,
-      `ROYAL OFFERING. Techniques: ORNATE GOLD TRAY + KUMKUM ACCENTS + LAYERED DIYAS. Product presented on an ornate gold-embossed tray with small kumkum and turmeric accents in brass bowls beside it. Multiple diyas at different depths create a cascade of warm golden light — foreground diyas slightly blurred, background diyas as bokeh orbs. Rich red velvet surface underneath. Opulent, auspicious, gift-worthy.`,
+      `ROYAL OFFERING. Techniques: ORNATE GOLD TRAY + WARM DIYA GLOW. Product presented on an ornate gold-embossed tray on rich red velvet. A single lit diya beside the product creates a warm golden pool of light. Scattered marigold petals at the base. Golden bokeh behind. Opulent, auspicious, gift-worthy.`,
       `TEMPLE GLOW. Techniques: EMBROIDERED SILK + BRASS LAMP + MARIGOLD GARLAND. Product on heavily embroidered silk with gold zari work. A traditional brass lamp (samai/vilakku) providing warm directional glow from one side. A floating marigold garland draped in an arc around the product. Warm golden atmosphere with incense smoke wisps catching the lamp light. Sacred, reverent, beautiful.`,
-      `HERITAGE WARMTH. Techniques: CARVED WOOD SURFACE + BRASSWARE PROPS + STRING LIGHTS. Product on a carved wooden surface (old chest or carved tray) with small brassware items — bells, small deity figures, betel nut box — arranged around it. Warm string lights woven through the background create a constellation of golden orbs. Saffron-gold warmth suffusing the entire scene. Nostalgic, celebratory, rich with heritage.`,
+      `HERITAGE WARMTH. Techniques: CARVED WOOD SURFACE + STRING LIGHT BOKEH. Product on a carved wooden tray. Warm string lights in the background create a constellation of golden bokeh orbs. One brass bell beside the product for scale. Saffron-gold warmth suffusing the scene. Nostalgic, celebratory.`,
     ],
   },
 
@@ -231,6 +231,10 @@ const STYLE_NARRATIVE_POOLS: Record<string, Record<string, string[]>> = {
   style_minimal: {
     default: [
       `ARCHITECTURAL STILLNESS. Techniques: SINGLE DIRECTIONAL LIGHT + DRAMATIC SHADOW + NEGATIVE SPACE. One hard light source from 60-80° creating a long, geometric shadow that IS the primary compositional element — the shadow is as important as the product itself. Product on raw concrete or honed stone. 60-70% of the frame is intentional empty space creating visual tension. Rule-of-thirds placement at the intersection. NO props, NO people, NO hands. The interplay of form, shadow, and void creates an architectural meditation. Zen, sophisticated, gallery-worthy.`,
+      `LEVITATION STUDY. Product floats in infinite white void with only a soft contact shadow beneath. Dead center placement. The emptiness IS the composition. Zero props, zero surface texture.`,
+      `COLOR FIELD. Product on a single muted-color surface (warm grey, pale sage, or dusty blush). Hard overhead light creates a tight illumination pool with sharp shadow edges. Product at bottom-third, 65% empty color field above.`,
+      `MACRO ABSTRACTION. Extreme close-up where the product fills 90% of frame. Focus on one surface detail — texture, material finish — with everything else in soft blur. Product becomes an abstract landscape of material and light.`,
+      `DIAGONAL TENSION. Product on diagonal axis. Hard side light creates a clean light-dark split across the surface. One half illuminated, one half in shadow. 55% negative space on the light side.`,
     ],
   },
 
@@ -492,7 +496,7 @@ What should the viewer FEEL? One of: craving, desire, energy, comfort, luxury, f
 Describe what is HAPPENING in this image in 2-3 sentences. Not camera specs — the SCENE. What objects are where? What action is frozen? What's the setting?
 
 ### 5e: Creative Brief
-Write a 120-180 word VIVID scene description for the AI image generator. Start with "Editorial product advertisement." then describe the physical scene: surface, product position, dynamic elements, lighting direction and color temperature, lens/DOF. Be SPECIFIC about what is WHERE — not flowery prose. This goes directly to the image generator.
+Write a 60-100 word PRECISE scene description. Every word must earn its place. Describe the surface, the single most important prop, the light direction, and the product placement.
 
 IMPORTANT: The product must look like a PHOTOGRAPHED physical object — NOT a 3D render. Include material cues in the brief: "packaging catches key light with specular highlights", "slight dimensional bulging from contents", "visible crinkle texture on foil/plastic", "glass surface shows reflections", "metal has natural sheen". The product should look premium and beautiful but REAL — like a high-end photoshoot, not a CGI illustration.
 
@@ -526,6 +530,8 @@ If this product is a cold beverage (isColdBeverage = true), ALL of the following
   * Jewellery → velvet fabric, soft bokeh lights, reflective surfaces
   * Fitness product → gym equipment, sweat towel, water splash
   The props should feel like they BELONG in the scene, not randomly placed. They should reinforce what the product IS and what it DOES.
+
+- LIGHTING LANGUAGE: Do NOT describe light as technical specifications (key light, fill light, ratios). Describe light as a PHYSICAL PRESENCE: "warm golden light spills across from the left", "a single beam cuts through darkness catching every edge", "soft diffused glow wraps the product". The image generator renders light better when described poetically, not technically.
 
 - BRAND COLOR HARMONY: Identify the product's dominant brand colors from the input photo. The scene's color palette should COMPLEMENT these colors:
   * Use the brand's accent color in props, lighting gels, or background elements

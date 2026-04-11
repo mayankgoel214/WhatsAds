@@ -28,33 +28,18 @@ interface StylePostConfig {
   blackLift: number;   // Lifted blacks value (0 = pure black, 15 = lifted)
 }
 
-// Post-processing should be SUBTLE — Bria/Seedream output is already good.
-// Heavy filters make the image look fake and over-processed.
-// Grain values are kept low to avoid damaging product colors.
+// Post-processing should be SUBTLE — Gemini output is already good.
+// Grain re-enabled at very low levels for anti-AI detection.
+// Gradient saturation reduced to 0.97 (cinematic), minimal to 0.95 (muted).
 const STYLE_POST_CONFIG: Record<string, StylePostConfig> = {
-  // Clean white: ultra-clean, zero warmth, no character — pure clinical
-  style_clean_white: { grain: 0, vignette: 0.01, warmthShift: 0, satBoost: 1.0, contrast: 1.0, blackLift: 0 },
-
-  // Colored studio: slight punch, warm-neutral, subtle character
-  style_studio:      { grain: 0, vignette: 0.03, warmthShift: 1, satBoost: 1.03, contrast: 1.01, blackLift: 2 },
-
-  // Dark luxury: cinematic — strong vignette, neutral-warm tones, punchy contrast, deeper blacks
-  style_gradient:    { grain: 0, vignette: 0.09, warmthShift: 1, satBoost: 1.05, contrast: 1.04, blackLift: 0 },
-
-  // Lifestyle: warm film look — warm tones, lifted shadows
-  style_lifestyle:   { grain: 0, vignette: 0.06, warmthShift: 3, satBoost: 1.03, contrast: 0.97, blackLift: 5 },
-
-  // Festive: warm golden glow — heaviest warmth, rich saturation, golden cast
-  style_festive:     { grain: 0, vignette: 0.07, warmthShift: 5, satBoost: 1.06, contrast: 0.96, blackLift: 4 },
-
-  // Outdoor: nature film — warm but natural, lifted shadows
-  style_outdoor:     { grain: 0, vignette: 0.07, warmthShift: 2, satBoost: 1.04, contrast: 0.96, blackLift: 4 },
-
-  // Minimal: cool, clinical, architectural — zero warmth, precise contrast, no grain
-  style_minimal:     { grain: 0, vignette: 0.015, warmthShift: -1, satBoost: 0.98, contrast: 1.02, blackLift: 1 },
-
-  // With model: warm portrait look — flattering warmth, soft contrast
-  style_with_model:  { grain: 0, vignette: 0.05, warmthShift: 2, satBoost: 1.02, contrast: 0.98, blackLift: 3 },
+  style_clean_white: { grain: 0.002, vignette: 0.005, warmthShift: 0, satBoost: 1.0, contrast: 1.0, blackLift: 0 },
+  style_studio:      { grain: 0.003, vignette: 0.02, warmthShift: 1, satBoost: 1.02, contrast: 1.01, blackLift: 2 },
+  style_gradient:    { grain: 0.003, vignette: 0.07, warmthShift: 1, satBoost: 0.97, contrast: 1.03, blackLift: 0 },
+  style_lifestyle:   { grain: 0.004, vignette: 0.04, warmthShift: 3, satBoost: 1.02, contrast: 0.97, blackLift: 5 },
+  style_festive:     { grain: 0.003, vignette: 0.05, warmthShift: 5, satBoost: 1.04, contrast: 0.96, blackLift: 4 },
+  style_outdoor:     { grain: 0.004, vignette: 0.05, warmthShift: 2, satBoost: 1.03, contrast: 0.96, blackLift: 4 },
+  style_minimal:     { grain: 0.002, vignette: 0.01, warmthShift: -1, satBoost: 0.95, contrast: 1.02, blackLift: 1 },
+  style_with_model:  { grain: 0.003, vignette: 0.04, warmthShift: 2, satBoost: 1.01, contrast: 0.98, blackLift: 3 },
 };
 
 const DEFAULT_POST_CONFIG: StylePostConfig = { grain: 0, vignette: 0.04, warmthShift: 1, satBoost: 1.02, contrast: 0.98, blackLift: 3 };
@@ -78,7 +63,7 @@ export async function postProcessFinal(imageBuffer: Buffer, style?: string): Pro
   const warmR = 1.0 + (config.warmthShift > 0 ? config.warmthShift * 0.001 : 0);
   const warmB = 1.0 + (config.warmthShift < 0 ? Math.abs(config.warmthShift) * 0.001 : -config.warmthShift * 0.0005);
   result = await sharp(result)
-    .sharpen({ sigma: 3, m1: 0.1, m2: 0.08 })
+    .sharpen({ sigma: 1.5, m1: 0.05, m2: 0.04 })
     .recomb([
       [warmR, 0, 0],
       [0, 1.0, 0],

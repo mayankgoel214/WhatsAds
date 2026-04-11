@@ -279,18 +279,18 @@ export async function processProductImageV3(
 
   function buildGenerationPromptV3(warnings?: string[]): string {
     const warningBlock = warnings?.length
-      ? `\nFIX THESE ISSUES FROM PREVIOUS ATTEMPT:\n${warnings.map(w => `- ${w}`).join('\n')}\n`
+      ? `\nFIX THESE FROM PREVIOUS ATTEMPT:\n${warnings.map(w => `- ${w}`).join('\n')}\n`
       : '';
 
-    const dynamicList = validPlan.dynamicElements.length > 0
-      ? `\nDynamic elements in the scene: ${validPlan.dynamicElements.join(', ')}`
+    // Only the SINGLE strongest dynamic element
+    const heroDynamic = validPlan.dynamicElements.length > 0
+      ? `\nHero dynamic element: ${validPlan.dynamicElements[0]}`
       : '';
 
     const componentsList = validPlan.analysis?.productComponents?.length
-      ? `Components: ${validPlan.analysis.productComponents.join(', ')}.`
+      ? ` Components: ${validPlan.analysis.productComponents.join(', ')}.`
       : '';
 
-    // Condensation control
     const allowCondensation = validPlan.isColdBeverage ||
       ['food_beverage', 'beverage'].includes(validPlan.productCategory) ||
       /bottle|tumbler|flask|cup|glass|can|drink/i.test(validPlan.analysis?.productType ?? '');
@@ -298,34 +298,18 @@ export async function processProductImageV3(
     const isLifestyle = params.style === 'style_lifestyle';
     const isOutdoor = params.style === 'style_outdoor';
 
-    // Style-specific direction (concise)
-    const styleDirection = getStyleDirection(params.style ?? 'style_lifestyle');
+    return `${getCameraSpec(params.style ?? 'style_lifestyle')}
 
-    return `Create a professional product advertisement photograph.
+A photograph of a product advertisement. Edge-to-edge composition, no borders or frames. Exactly one product instance.${params.style !== 'style_with_model' ? ' No people, hands, or body parts anywhere.' : ''} The product from the input photo fills ${isSmall ? 'the majority of the frame in tight macro' : (isLifestyle || isOutdoor ? '40-50%' : fillPct + '%')} of the frame.
 ${warningBlock}
-THE SCENE:
 ${validPlan.creativeBrief}
+${heroDynamic}
 
-THE MOMENT: ${validPlan.heroMoment}
-${dynamicList}
+Product: ${productName}.${componentsList} Every logo, text, and brand mark preserved exactly as in the input photo.${!allowCondensation ? ' Product surface is completely dry — no water or condensation.' : ''}
 
-THE PRODUCT (must match input photo EXACTLY):
-${productName}. ${componentsList}
-All text, logos, and brand marks must be legible and correctly spelled.
-Every component visible in the input must appear in the output.
-${isSmall ? 'Macro-style close crop — product DOMINATES the frame.' : `Product fills ~${isLifestyle || isOutdoor ? '35-55' : fillPct}% of frame.`}
+The product shows real material properties — packaging catches light with specular highlights, surfaces have micro-texture at full resolution. The product looks PHOTOGRAPHED, not rendered.${params.style === 'style_with_model' ? `
 
-${getCameraSpec(params.style ?? 'style_lifestyle')}
-
-STYLE: ${styleDirection}
-
-CONSTRAINTS:
-- Product must look PHOTOGRAPHED (real materials, real light), not 3D rendered
-- Exactly ONE product instance — never duplicated
-- Edge-to-edge composition, NO borders or frames
-- ZERO text except what is physically on the product
-- Square 1:1 format${params.style !== 'style_with_model' ? '\n- NO people, hands, or body parts' : '\n- Exactly ONE Indian/South Asian person actively using the product. Natural anatomy: 2 arms, 2 hands (5 fingers each), realistic skin and expression.'}
-${!allowCondensation ? '- Product surface must be completely DRY — no water droplets or condensation' : ''}`;
+One Indian/South Asian person actively using the product. Natural features: visible pores, asymmetric expression, flyaway hair. Each hand has exactly 5 fingers. Natural body proportions.` : ''}`;
   }
 
   let adBuffer: Buffer | null = null;
@@ -357,7 +341,7 @@ ${!allowCondensation ? '- Product surface must be completely DRY — no water dr
         totalAttempts += (PARALLEL_CANDIDATES - 1);
 
         const candidates = await Promise.allSettled(
-          [0.5, 0.8, 1.0].map(temp =>
+          [0.4, 0.6, 0.8].map(temp =>
             geminiGenerateImage({ inputImageBuffer: generationBuffer, prompt, temperature: temp })
           )
         );
@@ -695,21 +679,12 @@ async function selectBestCandidate(
     const inputBase64 = inputBuffer.toString('base64');
 
     const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
-      { text: `You are a creative director at a top ad agency. Pick the candidate that would make someone STOP SCROLLING on Instagram and WANT this product.
+      { text: `Pick the BEST product ad photo. Image 1 is the original product.
 
-EVALUATE EACH CANDIDATE ON THESE CRITERIA (IN ORDER OF IMPORTANCE):
-
-1. PRODUCT ACCURACY (MOST IMPORTANT — DEALBREAKER) — Does the product match the original photo EXACTLY? Same shape, proportions, colors, components, details. If any candidate distorts the product (wrong shape, missing components, altered proportions, simplified details), it is AUTOMATICALLY ELIMINATED regardless of how beautiful the image is. A candidate with a perfect product in a simple scene BEATS a candidate with a distorted product in a stunning scene.
-2. STYLE MATCH — Does the image match the requested style? (e.g., dark luxury should be DARK, outdoor should be genuinely OUTDOORS)
-3. SCROLL-STOPPING POWER — Which remaining candidate is the most visually compelling? Bold lighting, dynamic elements, creative energy.
-4. COMPOSITION — Dynamic, interesting composition? Off-center placement, rule of thirds.
-5. DYNAMIC ELEMENTS — Are splashes, particles, props present and convincing?
-6. LIGHTING & MOOD — Does the lighting create mood and dimension?
-7. DEPTH — Foreground-midground-background separation?
-8. PHOTOREALISM — Looks like a real photograph, not CGI?
-9. NO DEFECTS — No borders, watermarks, text overlays, duplicate products?
-
-CRITICAL: Product accuracy is NON-NEGOTIABLE. If only one candidate has the product right, pick that one even if it's less dramatic.
+Evaluate each candidate on 3 criteria ONLY (in priority order):
+1. PRODUCT ACCURACY — Does the product match the original exactly? Wrong shape, missing parts, or altered details = instant elimination.
+2. VISUAL IMPACT — Which would make someone stop scrolling on Instagram? Lighting drama, composition, beauty.
+3. PHOTOREALISM — Which looks most like a real professional photograph?
 
 Reply with ONLY the letter: ${candidates.map((_, i) => String.fromCharCode(65 + i)).join(', ')}.` },
       { inlineData: { mimeType: inputMime, data: inputBase64 } },
