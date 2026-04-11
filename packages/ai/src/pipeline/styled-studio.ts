@@ -141,19 +141,62 @@ export async function createStyledStudioShot(
       .toBuffer();
   }
 
-  // Step 7: Composite product centered on background
+  // Step 7: Add horizontal surface line — top half is "wall", bottom half is "surface"
+  const surfaceLineY = Math.round(SIZE * 0.62); // Surface starts at 62% height
+  const surfaceSvg = Buffer.from(
+    `<svg width="${SIZE}" height="${SIZE}">
+      <defs>
+        <linearGradient id="surface" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="black" stop-opacity="0"/>
+          <stop offset="${Math.round((surfaceLineY / SIZE) * 100)}%" stop-color="black" stop-opacity="0"/>
+          <stop offset="${Math.round((surfaceLineY / SIZE) * 100) + 1}%" stop-color="black" stop-opacity="0.04"/>
+          <stop offset="100%" stop-color="black" stop-opacity="0.08"/>
+        </linearGradient>
+      </defs>
+      <rect width="${SIZE}" height="${SIZE}" fill="url(#surface)"/>
+    </svg>`
+  );
+  const surfaceOverlay = await sharp(surfaceSvg).png().toBuffer();
+  backgroundBuffer = await sharp(backgroundBuffer)
+    .composite([{ input: surfaceOverlay, blend: 'multiply' }])
+    .jpeg({ quality: 95 })
+    .toBuffer();
+
+  // Step 8: Composite product centered on background (shifted slightly up for surface illusion)
   const productMeta = await sharp(resizedProduct).metadata();
   const pW = productMeta.width ?? maxProductSize;
   const pH = productMeta.height ?? maxProductSize;
   const left = Math.round((SIZE - pW) / 2);
-  const top = Math.round((SIZE - pH) / 2);
+  // Place product so its bottom edge sits just above the surface line
+  const top = Math.round(surfaceLineY - pH * 0.85);
+
+  // Step 8b: Create contact shadow under the product
+  const composites: { input: Buffer; left: number; top: number; blend?: string }[] = [];
+  try {
+    const shadowBlur = Math.max(Math.round(pW * 0.04), 4);
+    const shadowBuffer = await sharp(resizedProduct)
+      .flatten({ background: { r: 0, g: 0, b: 0 } }) // black silhouette
+      .ensureAlpha(0.10) // subtle transparency
+      .blur(shadowBlur)
+      .png()
+      .toBuffer();
+    composites.push({
+      input: shadowBuffer,
+      left: left + Math.round(pW * 0.03),
+      top: top + Math.round(pH * 0.04),
+    });
+  } catch {
+    // Shadow creation failed — skip it, composite product without shadow
+  }
+
+  composites.push({ input: resizedProduct, left, top });
 
   let result = await sharp(backgroundBuffer)
-    .composite([{ input: resizedProduct, left, top }])
+    .composite(composites.map(c => ({ input: c.input, left: c.left, top: c.top, blend: 'over' as const })))
     .jpeg({ quality: 92 })
     .toBuffer();
 
-  // Step 8: Post-process + AI label
+  // Step 9: Post-process + AI label
   result = await postProcessFinal(result, style);
   result = await addAILabel(result);
 

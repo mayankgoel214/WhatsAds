@@ -156,6 +156,20 @@ async function detectAndCropBorder(buffer: Buffer): Promise<{ cropped: boolean; 
  *   - Border detection & auto-crop
  *   - Selector evaluates emotional impact, not just photorealism
  */
+function getStyleDirection(style: string): string {
+  const directions: Record<string, string> = {
+    style_clean_white: 'Pure white background, soft diffused lighting, e-commerce style. No props, no shadows.',
+    style_studio: 'Bold saturated colored backdrop that complements the product. Three-point studio lighting with visible shadow on the colored surface.',
+    style_gradient: 'Pitch black background, reflective dark surface with mirror reflection. Rim lighting creating glowing edges. Bold dramatic dynamic elements — splashes, particles, mist.',
+    style_lifestyle: 'Warm, believable indoor environment (kitchen, cafe, living room). Natural window light, shallow DOF with creamy bokeh. 2-3 contextual props telling a story.',
+    style_outdoor: 'Genuinely outdoors with real sky and foliage. Golden hour backlight with rim glow. Weathered natural surface. Extreme shallow DOF.',
+    style_festive: 'Indian festival celebration — diyas, marigolds, rangoli, brass elements, silk fabric. Warm golden-amber tones (2700-3200K). Multiple warm light sources creating layered bokeh.',
+    style_minimal: '60-70% intentional negative space. Rule of thirds placement. ONE hard directional light creating a long dramatic shadow. Zero props.',
+    style_with_model: 'Person actively holding/wearing/using the product in a natural setting. Shallow DOF, editorial lifestyle feel.',
+  };
+  return directions[style] ?? directions['style_lifestyle']!;
+}
+
 export async function processProductImageV3(
   params: ProcessImageParams,
 ): Promise<ProcessImageResult> {
@@ -265,152 +279,53 @@ export async function processProductImageV3(
 
   function buildGenerationPromptV3(warnings?: string[]): string {
     const warningBlock = warnings?.length
-      ? `\nCRITICAL CORRECTIONS FROM PREVIOUS ATTEMPT:\n${warnings.map(w => `- ${w}`).join('\n')}\n`
+      ? `\nFIX THESE ISSUES FROM PREVIOUS ATTEMPT:\n${warnings.map(w => `- ${w}`).join('\n')}\n`
       : '';
 
-    // Dynamic elements formatted as a vivid list
     const dynamicList = validPlan.dynamicElements.length > 0
-      ? validPlan.dynamicElements.map(d => `- ${d}`).join('\n')
+      ? `\nDynamic elements in the scene: ${validPlan.dynamicElements.join(', ')}`
       : '';
-
-    // Style-aware composition rules
-    const isGradient = params.style === 'style_gradient';
-    const isOutdoor = params.style === 'style_outdoor';
-    const isMinimal = params.style === 'style_minimal';
-    const isFestive = params.style === 'style_festive';
-    const isStudio = params.style === 'style_studio';
-    const isCleanWhite = params.style === 'style_clean_white';
-    const isLifestyle = params.style === 'style_lifestyle';
-
-    // Condensation is only appropriate for beverage/food products
-    const productTypeLower = (validPlan.analysis?.productType ?? '').toLowerCase();
-    const allowCondensation = validPlan.isColdBeverage ||
-      validPlan.productCategory === 'food' ||
-      productTypeLower.includes('bottle') ||
-      productTypeLower.includes('tumbler') ||
-      productTypeLower.includes('flask') ||
-      productTypeLower.includes('cup') ||
-      productTypeLower.includes('glass') ||
-      productTypeLower.includes('can') ||
-      productTypeLower.includes('beverage') ||
-      productTypeLower.includes('drink');
 
     const componentsList = validPlan.analysis?.productComponents?.length
-      ? `Detected components from input photo: ${validPlan.analysis.productComponents.join(', ')}.`
+      ? `Components: ${validPlan.analysis.productComponents.join(', ')}.`
       : '';
 
-    return `Study this product photo — note exact shape, colors, branding, logos, texture. Use ONLY as visual reference.
+    // Condensation control
+    const allowCondensation = validPlan.isColdBeverage ||
+      ['food_beverage', 'beverage'].includes(validPlan.productCategory) ||
+      /bottle|tumbler|flask|cup|glass|can|drink/i.test(validPlan.analysis?.productType ?? '');
+
+    const isLifestyle = params.style === 'style_lifestyle';
+    const isOutdoor = params.style === 'style_outdoor';
+
+    // Style-specific direction (concise)
+    const styleDirection = getStyleDirection(params.style ?? 'style_lifestyle');
+
+    return `Create a professional product advertisement photograph.
 ${warningBlock}
-== PRODUCT COMPONENTS & ACCESSORIES (CRITICAL — HIGHER PRIORITY THAN CREATIVE BRIEF) ==
-${componentsList}
-Preserve ALL visible components from the original photo. If the product has a cap, lid, cover, box, stand, applicator, or any accessory that is visible in the input image, it MUST appear in the generated ad — either attached to the product in its natural position, or placed elegantly beside it. Do NOT remove, hide, or omit any component that is visible in the original photo. A perfume bottle with a cap must show the cap (on the bottle or placed next to it). A jar with a lid must show the lid. A device with a charging cable must show the cable. Every piece that ships with or appears on the product must be represented.
-
-== PRODUCT ACCURACY (ABSOLUTE HIGHEST PRIORITY — ABOVE ALL ELSE) ==
-The product in the output MUST be a PIXEL-PERFECT photographic match to the input. This is MORE important than creative brief, dynamic elements, or scene quality.
-- SHAPE & PROPORTIONS: Every dimension, curve, angle, and ratio must match the input EXACTLY. If the product is a necklace with earrings, EACH piece must maintain its exact shape and proportional relationship.
-- COLORS & MATERIALS: Exact same colors, metallic sheen, transparency, and material texture. Gold must stay gold (warm). Silver must stay silver. Gemstones must be the same color and cut.
-- TEXT & LOGOS: All text, logos, brand marks must be legible, correctly spelled, and in the correct position.
-- COMPONENTS: If the input shows a SET of items (necklace + earrings, bottle + cap, phone + case), ALL pieces must appear with their EXACT original design. Do NOT simplify, merge, or redesign any component.
-- COUNT: Exactly ONE instance of the product (or one set if it's a set). Never duplicate.
-- DETAIL PRESERVATION: Fine details like individual stones in jewellery, stitching on fabric, circuit patterns on electronics — these MUST be preserved. Do NOT smooth out or simplify intricate details.
-${isSmall ? '- TIGHT macro-style crop — small product DOMINATES the frame.' : ''}
-Product fills approximately ${isLifestyle || isOutdoor ? '35-55' : fillPct}% of the frame${isLifestyle || isOutdoor ? ' — the environment matters as much as the product' : ''}.
-
-IF THERE IS ANY CONFLICT between the creative brief and product accuracy, PRODUCT ACCURACY WINS. A boring image of the correct product is infinitely better than a stunning image of the wrong product.
-
-== CREATIVE BRIEF (FOLLOW THIS EXACTLY) ==
+THE SCENE:
 ${validPlan.creativeBrief}
 
-== HERO MOMENT ==
-${validPlan.heroMoment}
-
-== DYNAMIC ELEMENTS (add these but NEVER let them obscure or distort the product) ==
+THE MOMENT: ${validPlan.heroMoment}
 ${dynamicList}
-Dynamic elements should ENHANCE the product, not compete with it. They must:
-- Stay BEHIND or TO THE SIDE of the product — never covering or overlapping the product
-- Be physically plausible for the scene
-- If the product has fine details (jewellery, electronics, text), REDUCE dynamic elements to avoid visual interference
 
-== CAMERA & LENS ==
+THE PRODUCT (must match input photo EXACTLY):
+${productName}. ${componentsList}
+All text, logos, and brand marks must be legible and correctly spelled.
+Every component visible in the input must appear in the output.
+${isSmall ? 'Macro-style close crop — product DOMINATES the frame.' : `Product fills ~${isLifestyle || isOutdoor ? '35-55' : fillPct}% of frame.`}
+
 ${getCameraSpec(params.style ?? 'style_lifestyle')}
 
-== PRODUCT MUST LOOK PHOTOGRAPHED, NOT RENDERED ==
-The product must look like a REAL PHYSICAL OBJECT photographed by a camera — NOT a 3D render or CGI.
-- PACKAGING MATERIAL: If the product has plastic/foil packaging, it must show realistic specular highlights where the key light catches the shiny surface. The packaging should have subtle crinkle texture and slight dimensional bulging from contents inside — not a flat texture on a perfect rectangle.
-- SURFACE QUALITY: Every material must have photographic micro-texture visible. Plastic catches light at sharp specular points. Glass has reflections. Metal has sheen. Paper has fiber grain. Fabric has weave. Nothing is uniformly smooth or matte like a CGI render.
-- LIGHTING ON PRODUCT: The product MUST be lit by the SAME light source as the scene. If the scene has warm side-lighting from the left, the product must have matching highlights on the left and shadows on the right. Consistent shadow direction throughout.
-- The product should look PREMIUM and BEAUTIFUL — like a high-end photoshoot — but still clearly a photograph of a physical object, not a digital illustration.
-${allowCondensation ? '- CONDENSATION RULE: Condensation and water droplets on the product surface are encouraged — they convey freshness and cold temperature.' : '- CONDENSATION RULE: ABSOLUTELY NO condensation, water droplets, dew, or moisture on the product surface. This product should be completely DRY. A dry product with good lighting looks more premium than a wet product that should not be wet.'}
+STYLE: ${styleDirection}
 
-== RULES ==
-${isFestive ? `== MANDATORY FESTIVE SCENE ==
-- Scene MUST include: warm diya/candle glow as primary or accent light (2700-3000K)
-- Cultural props required: at least one of: brass thali, marigold petals/garlands, rangoli pattern, silk/velvet fabric, gold elements
-- Background: warm golden bokeh with fairy lights at multiple depths
-- Color palette: deep maroon, gold, amber, saffron — NO cool tones
-- This is a Diwali/Indian festival celebration — NOT a gym, office, or modern minimalist setting
-- The scene must feel ABUNDANT and CELEBRATORY — not sparse or minimal
-- Warm golden-amber color temperature throughout (2700-3200K)
-- Multiple light sources at different depths creating layered bokeh
-` : ''}${isStudio ? `== COLORED STUDIO RULES ==
-- The backdrop color MUST be a specific, BOLD, SATURATED color — NOT white, NOT grey, NOT beige, NOT pale
-- The color should COMPLEMENT the product: warm products get cool backdrops (teal, navy, sage), cool products get warm backdrops (terracotta, dusty rose, burnt orange)
-- The backdrop color should be stated in the creative brief — follow it exactly
-- Professional three-point studio lighting: key light 45° creating visible shadow on the colored surface
-- The shadow cast by the product on the colored surface IS a compositional element — make it dramatic
-- Maximum 1 small contextual prop related to the product (or none at all)
-- No outdoor elements, no lifestyle context, no room environments
-` : ''}${isCleanWhite ? `== CLEAN WHITE RULES ==
-- Pure white (#FFFFFF) background — no gradients, no colors
-- Soft, even, shadowless lighting
-- Product floating or on a barely-visible white surface
-- E-commerce style: clean, clinical, professional
-` : ''}${isLifestyle ? `== LIFESTYLE RULES ==
-- Product must exist in a COMPLETE, BELIEVABLE ENVIRONMENT — not floating on a surface
-- Warm, relatable indoor setting: kitchen, cafe table, cozy living room, bathroom vanity, workspace
-- Natural window light or warm artificial light with VISIBLE light source direction
-- 2-3 contextual props that TELL A STORY about how this product is used
-- Shallow depth of field (f/1.4-2.8) — background should have beautiful bokeh blur
-- The scene should look like a real room someone lives in — not a staged studio set
-- The viewer should WANT to be in this space
-` : ''}${isGradient ? `== DARK LUXURY RULES ==
-- Background MUST be pitch black or very dark (near-black) — this is NON-NEGOTIABLE
-- Product on a reflective dark surface (black acrylic, wet obsidian, dark marble) with visible mirror reflection below
-- Rim lighting from behind creating razor-sharp glowing edges on the product
-- Dynamic elements should be BOLD and DRAMATIC — splashes, explosions, particles, mist — not subtle
-- Atmospheric elements: low-lying fog/mist at the base, dust particles caught in light beams
-- The image should feel CINEMATIC and PREMIUM — like a luxury brand campaign
-- THEATRICAL COMPOSITION ALLOWED: extreme contrast, dramatic shadows, bold visual effects
-` : ''}${isOutdoor ? `== OUTDOOR RULES ==
-- MUST be visibly OUTDOORS — real sky, foliage, trees, or natural environment in background
-- Golden hour lighting: warm backlight creating rim glow on product edges
-- Natural surface: weathered wood, sun-warmed stone, moss-covered rock, sandy ground
-- Extreme shallow DOF (f/1.4-2.0) MANDATORY — background melts into golden-green bokeh
-- 1-2 natural foreground elements for depth: wildflower, grass blade, leaf
-- NOT an indoor shot with a plant in the background — genuinely OUTDOORS
-` : ''}${isMinimal ? `== MINIMAL RULES ==
-- 60-70% of frame is INTENTIONAL negative space — the emptiness IS the design
-- Product positioned using rule of thirds (NOT centered)
-- ONE hard directional light source creating a LONG, dramatic shadow across the negative space
-- The shadow is a compositional element — as important as the product itself
-- Surface: white marble, raw concrete, or matte neutral — nothing busy
-- ZERO props. The product, its shadow, and empty space. Nothing else.
-- Cool, architectural, gallery-like atmosphere
-` : ''}- EDGE TO EDGE — no borders, frames, or decorative edges. Scene extends to all four canvas edges.
-- ZERO text except what is physically ON the product. No watermarks, labels, "AI Generated" text.
-- Square 1:1 format.${params.style !== 'style_with_model' ? `
-- ABSOLUTELY NO PEOPLE. No person, hands, fingers, arms, body parts, mannequin, or silhouette.` : ''}
-${!isGradient && !isOutdoor && !isMinimal && !isFestive ? `- Product sits naturally on surface — obeys gravity, has natural weight and presence.` : ''}${params.style === 'style_with_model' ? `
-- THIS IMAGE MUST CONTAIN EXACTLY ONE PERSON — this is mandatory, not optional. An image without a person is a FAILURE for this style.
-- HUMAN ANATOMY (CRITICAL):
-  - Exactly ONE Indian/South Asian person actively interacting with the product.
-  - Exactly 2 arms, 2 legs, 2 hands, 2 feet. Each hand has exactly 5 fingers.
-  - Natural skin (visible pores), asymmetric candid expression, flyaway hair strands.
-  - When seated/curled: limbs CLEARLY distinguishable — no phantom limbs.
-  - Person must be HOLDING, WEARING, USING, or APPLYING the product — not just standing near it.` : ''}
-- Natural photographic imperfections: subtle film grain, slight vignetting, surfaces show micro-texture.
-
-Verify: (1) no borders, (2) no random text, (3) dynamic elements are present and physically real, (4) product looks like a PHOTOGRAPH not a render, (5) product matches input exactly.`;
+CONSTRAINTS:
+- Product must look PHOTOGRAPHED (real materials, real light), not 3D rendered
+- Exactly ONE product instance — never duplicated
+- Edge-to-edge composition, NO borders or frames
+- ZERO text except what is physically on the product
+- Square 1:1 format${params.style !== 'style_with_model' ? '\n- NO people, hands, or body parts' : '\n- Exactly ONE Indian/South Asian person actively using the product. Natural anatomy: 2 arms, 2 hands (5 fingers each), realistic skin and expression.'}
+${!allowCondensation ? '- Product surface must be completely DRY — no water droplets or condensation' : ''}`;
   }
 
   let adBuffer: Buffer | null = null;

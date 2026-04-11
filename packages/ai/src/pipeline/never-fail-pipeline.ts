@@ -9,7 +9,8 @@
 
 import { processProductImageV3 } from './gemini-pipeline-v3.js';
 import type { ProcessImageParams, ProcessImageResult } from './orchestrator.js';
-import { downloadBuffer, uploadToStorage } from './fallback.js';
+import { downloadBuffer, uploadToStorage, createBriaFallbackShot, postProcessFinal, addAILabel } from './fallback.js';
+import { runDeterministicChecks } from '../qa/deterministic-checks.js';
 import { createStyledStudioShot, createCleanStudioShot, createEnhancedOriginal } from './styled-studio.js';
 
 export interface NeverFailResult {
@@ -63,33 +64,70 @@ export async function processImageNeverFail(
     console.warn(JSON.stringify({ event: 'never_fail_tier1_failed', reason: reason.slice(0, 200), durationMs: Date.now() - totalStart }));
   }
 
-  // ── Tier 2: Styled Studio Shot (90s budget) ───────────────────────
+  // ── Tier 2A: Bria Product Shot (60s budget) ──────────────────────
   try {
-    console.info(JSON.stringify({ event: 'never_fail_tier2_start' }));
+    console.info(JSON.stringify({ event: 'never_fail_tier2a_bria_start', style }));
 
-    const TIER2_TIMEOUT = 90_000;
-    const styledBuffer = await Promise.race([
-      createStyledStudioShot(rawBuffer, params.imageUrl, style, category),
+    const briaBuffer = await Promise.race([
+      createBriaFallbackShot(rawBuffer, params.imageUrl, style, category),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Tier 2 (Styled Studio) timed out after 90s')), TIER2_TIMEOUT)
+        setTimeout(() => reject(new Error('Tier 2A (Bria) timed out after 60s')), 60_000)
       ),
     ]);
 
-    const outputUrl = await uploadToStorage(styledBuffer, `output_tier2_${Date.now()}.jpg`);
+    // Run quick deterministic check on Bria output
+    const briaCheck = await runDeterministicChecks(rawBuffer, briaBuffer);
+    if (briaCheck.pass || briaCheck.estimatedFillPct > 15) {
+      let output = await postProcessFinal(briaBuffer, style);
+      output = await addAILabel(output);
+
+      const outputUrl = await uploadToStorage(output, `output_tier2a_${Date.now()}.jpg`);
+
+      // Generate video (non-fatal)
+      let videoUrl: string | undefined;
+      try {
+        const { generateKenBurnsVideo } = await import('../video/ken-burns.js');
+        const videoResult = await generateKenBurnsVideo(output, { productCategory: category, durationSec: 5 });
+        videoUrl = await uploadToStorage(videoResult.videoBuffer, `video_tier2a_${Date.now()}.mp4`, 'video/mp4');
+      } catch { /* video is optional */ }
+
+      console.info(JSON.stringify({ event: 'never_fail_tier2a_bria_success', durationMs: Date.now() - totalStart, qaEstimate: 65 }));
+      return { outputUrl, videoUrl, qaScore: 65, pipeline: 'bria-fallback', attempts: 0, durationMs: Date.now() - totalStart, tier: 2, tierReason: 'V3 creative failed, Bria Product Shot succeeded' };
+    } else {
+      console.warn(JSON.stringify({ event: 'never_fail_tier2a_bria_qa_fail', fillPct: briaCheck.estimatedFillPct, reason: briaCheck.failReason }));
+    }
+  } catch (briaErr) {
+    const reason = briaErr instanceof Error ? briaErr.message : String(briaErr);
+    console.warn(JSON.stringify({ event: 'never_fail_tier2a_bria_failed', reason: reason.slice(0, 200), durationMs: Date.now() - totalStart }));
+  }
+
+  // ── Tier 2B: Styled Studio Shot (90s budget) ─────────────────────
+  try {
+    console.info(JSON.stringify({ event: 'never_fail_tier2b_start' }));
+
+    const TIER2B_TIMEOUT = 90_000;
+    const styledBuffer = await Promise.race([
+      createStyledStudioShot(rawBuffer, params.imageUrl, style, category),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Tier 2B (Styled Studio) timed out after 90s')), TIER2B_TIMEOUT)
+      ),
+    ]);
+
+    const outputUrl = await uploadToStorage(styledBuffer, `output_tier2b_${Date.now()}.jpg`);
 
     // Generate video (non-fatal)
     let videoUrl: string | undefined;
     try {
       const { generateKenBurnsVideo } = await import('../video/ken-burns.js');
       const videoResult = await generateKenBurnsVideo(styledBuffer, { productCategory: category, durationSec: 5 });
-      videoUrl = await uploadToStorage(videoResult.videoBuffer, `video_tier2_${Date.now()}.mp4`, 'video/mp4');
+      videoUrl = await uploadToStorage(videoResult.videoBuffer, `video_tier2b_${Date.now()}.mp4`, 'video/mp4');
     } catch { /* video is optional */ }
 
-    console.info(JSON.stringify({ event: 'never_fail_tier2_success', durationMs: Date.now() - totalStart }));
-    return { outputUrl, videoUrl, qaScore: 50, pipeline: 'styled-studio', attempts: 0, durationMs: Date.now() - totalStart, tier: 2, tierReason: 'V3 creative generation failed' };
+    console.info(JSON.stringify({ event: 'never_fail_tier2b_success', durationMs: Date.now() - totalStart }));
+    return { outputUrl, videoUrl, qaScore: 50, pipeline: 'styled-studio', attempts: 0, durationMs: Date.now() - totalStart, tier: 2, tierReason: 'V3 creative + Bria failed, styled studio succeeded' };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    console.warn(JSON.stringify({ event: 'never_fail_tier2_failed', reason: reason.slice(0, 200), durationMs: Date.now() - totalStart }));
+    console.warn(JSON.stringify({ event: 'never_fail_tier2b_failed', reason: reason.slice(0, 200), durationMs: Date.now() - totalStart }));
   }
 
   // ── Tier 3: Clean Studio Shot (2s budget, zero API calls) ─────────

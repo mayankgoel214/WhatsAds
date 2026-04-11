@@ -165,8 +165,10 @@ export async function geminiGenerateImage(
       lastError = err instanceof Error ? err : new Error(String(err));
       const errStr = String(err);
 
-      // Don't retry on client errors (400, safety blocks)
-      if (errStr.includes('"code":400') || errStr.includes('SAFETY') || errStr.includes('PROHIBITED_CONTENT')) {
+      // Don't retry on permanent errors (400, 401, 403, safety blocks)
+      if (errStr.includes('"code":400') || errStr.includes('"code":401') || errStr.includes('"code":403') ||
+          errStr.includes('SAFETY') || errStr.includes('PROHIBITED_CONTENT') ||
+          errStr.includes('PERMISSION_DENIED') || errStr.includes('UNAUTHENTICATED')) {
         geminiImageBreaker.recordFailure();
         const durationMs = Date.now() - startMs;
         console.info(JSON.stringify({ event: 'gemini_generate_error', durationMs, error: errStr }));

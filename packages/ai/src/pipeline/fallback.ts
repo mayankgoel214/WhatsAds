@@ -74,15 +74,11 @@ export async function postProcessFinal(imageBuffer: Buffer, style?: string): Pro
 
   let result = imageBuffer;
 
-  // 1. Subtle micro-contrast — very light touch, Bria output is already sharp
-  result = await sharp(result)
-    .sharpen({ sigma: 3, m1: 0.1, m2: 0.08 })
-    .toBuffer();
-
-  // 2. Subtle color grade — minimal adjustments, let the AI output speak
+  // 1. Micro-contrast + color grade in a single sharp pipeline (avoid intermediate buffer)
   const warmR = 1.0 + (config.warmthShift > 0 ? config.warmthShift * 0.001 : 0);
   const warmB = 1.0 + (config.warmthShift < 0 ? Math.abs(config.warmthShift) * 0.001 : -config.warmthShift * 0.0005);
   result = await sharp(result)
+    .sharpen({ sigma: 3, m1: 0.1, m2: 0.08 })
     .recomb([
       [warmR, 0, 0],
       [0, 1.0, 0],
@@ -92,10 +88,9 @@ export async function postProcessFinal(imageBuffer: Buffer, style?: string): Pro
     .modulate({ brightness: 1.0, saturation: config.satBoost })
     .toBuffer();
 
-  // 3. Chromatic aberration — subtle color fringing at edges (real lens effect)
-  result = await addChromaticAberration(result);
+  // 2. Chromatic aberration removed — 0.5px shift is imperceptible, cost 200-400ms + 8MB buffers
 
-  // 4. Vignette (if style uses it)
+  // 3. Vignette (if style uses it)
   if (config.vignette > 0) {
     result = await addVignette(result, config.vignette);
   }
@@ -120,11 +115,7 @@ export async function postProcessFinal(imageBuffer: Buffer, style?: string): Pro
   return result;
 }
 
-/**
- * Chromatic aberration — simulates real lens color fringing.
- * Shifts red channel slightly outward, blue slightly inward from center.
- * The effect is tiny (1px) but the brain detects its absence in AI images.
- */
+// @deprecated — removed from pipeline, 0.5px shift is imperceptible (costs 200-400ms + 8MB buffers)
 async function addChromaticAberration(imageBuffer: Buffer): Promise<Buffer> {
   const { data, info } = await sharp(imageBuffer)
     .ensureAlpha()
@@ -442,66 +433,57 @@ export async function upscaleDownscale(imageBuffer: Buffer): Promise<Buffer> {
 /**
  * Add uniform film grain over entire image.
  * Unifies the noise pattern between real product cutout and AI background.
+ * Uses single-channel (greyscale) noise — 3x less memory and 3x fewer random calls
+ * than the previous 3-channel approach. soft-light blend handles color interaction.
  */
 async function addFilmGrain(imageBuffer: Buffer, intensity: number = 4): Promise<Buffer> {
+  if (intensity <= 0) return imageBuffer;
   const meta = await sharp(imageBuffer).metadata();
   const w = meta.width ?? 1024;
   const h = meta.height ?? 1024;
 
-  // Generate Gaussian noise buffer (centered at 128, stddev = intensity)
-  const noiseData = Buffer.alloc(w * h * 3);
+  // Generate a grey noise image — single channel, much faster than pixel-by-pixel 3-channel
+  const noiseData = Buffer.alloc(w * h);
   for (let i = 0; i < noiseData.length; i++) {
-    const u1 = Math.random() || 0.001;
-    const u2 = Math.random();
-    const gaussian = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-    noiseData[i] = Math.min(255, Math.max(0, Math.round(128 + gaussian * intensity)));
+    noiseData[i] = Math.round(128 + (Math.random() - 0.5) * intensity * 40);
   }
 
-  const noiseBuffer = await sharp(noiseData, { raw: { width: w, height: h, channels: 3 } })
-    .png()
+  const noiseBuffer = await sharp(noiseData, { raw: { width: w, height: h, channels: 1 } })
+    .jpeg({ quality: 80 })
     .toBuffer();
 
   return sharp(imageBuffer)
-    .composite([{ input: noiseBuffer, blend: 'soft-light', left: 0, top: 0 }])
+    .composite([{ input: noiseBuffer, blend: 'soft-light' }])
+    .jpeg({ quality: 92 })
     .toBuffer();
 }
 
 /**
  * Add vignette — subtle darkening at edges/corners.
  * Simulates real lens barrel light falloff.
+ * Uses SVG radial gradient overlay instead of pixel-by-pixel iteration.
  */
 async function addVignette(imageBuffer: Buffer, strength: number = 0.25): Promise<Buffer> {
+  if (strength <= 0) return imageBuffer;
   const meta = await sharp(imageBuffer).metadata();
   const w = meta.width ?? 1024;
   const h = meta.height ?? 1024;
 
-  const vignetteData = Buffer.alloc(w * h * 4);
-  const cx = w / 2;
-  const cy = h / 2;
-  const maxDist = Math.sqrt(cx * cx + cy * cy);
-
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const dx = x - cx;
-      const dy = y - cy;
-      const dist = Math.sqrt(dx * dx + dy * dy) / maxDist;
-      const falloff = Math.max(0, (dist - 0.4) / 0.6);
-      const alpha = Math.round(falloff * falloff * strength * 255);
-
-      const idx = (y * w + x) * 4;
-      vignetteData[idx] = 0;
-      vignetteData[idx + 1] = 0;
-      vignetteData[idx + 2] = 0;
-      vignetteData[idx + 3] = Math.min(alpha, 255);
-    }
-  }
-
-  const vignetteBuffer = await sharp(vignetteData, { raw: { width: w, height: h, channels: 4 } })
-    .png()
-    .toBuffer();
+  // Create radial gradient vignette as SVG
+  const opacity = Math.min(strength * 3, 0.8); // scale strength to opacity
+  const svg = `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <radialGradient id="v" cx="50%" cy="50%" r="70%">
+        <stop offset="0%" stop-color="black" stop-opacity="0"/>
+        <stop offset="100%" stop-color="black" stop-opacity="${opacity}"/>
+      </radialGradient>
+    </defs>
+    <rect width="${w}" height="${h}" fill="url(#v)"/>
+  </svg>`;
 
   return sharp(imageBuffer)
-    .composite([{ input: vignetteBuffer, blend: 'over', left: 0, top: 0 }])
+    .composite([{ input: Buffer.from(svg), blend: 'multiply' }])
+    .jpeg({ quality: 92 })
     .toBuffer();
 }
 
@@ -1143,6 +1125,89 @@ export async function harmonizeLighting(
 
   const outputBuffer = await downloadBuffer(outputUrl);
   console.info(JSON.stringify({ event: 'iclight_complete', durationMs: Date.now() - startMs }));
+  return outputBuffer;
+}
+
+// ---------------------------------------------------------------------------
+// Bria Product Shot fallback (Tier 2 upgrade in never-fail pipeline)
+// ---------------------------------------------------------------------------
+
+/**
+ * Scene prompts for Bria Product Shot, keyed by style.
+ * These describe the background scene Bria should generate around the product.
+ */
+function getBriaScenePrompt(style: string, _category: string): string {
+  const prompts: Record<string, string> = {
+    style_clean_white: 'Clean white studio background with soft even lighting, professional e-commerce photography',
+    style_studio: 'Professional studio with bold colored seamless backdrop, three-point studio lighting, dramatic shadows',
+    style_gradient: 'Dark luxury setting with black reflective surface, dramatic rim lighting, premium atmosphere',
+    style_lifestyle: 'Warm lifestyle setting, natural window light, cozy home environment with contextual props',
+    style_outdoor: 'Outdoor natural setting, golden hour sunlight, wooden surface, lush green nature background',
+    style_festive: 'Festive Indian celebration setting with warm golden lighting, traditional decorative elements',
+    style_minimal: 'Minimal setting with concrete surface, single directional light, large negative space, dramatic shadow',
+    style_with_model: 'Lifestyle setting with natural light, casual modern environment',
+  };
+  return prompts[style] ?? prompts['style_lifestyle']!;
+}
+
+/**
+ * Creates a product shot using Bria Product Shot via fal.ai.
+ * Takes the raw image, runs BiRefNet cutout + white canvas (createStudioShot),
+ * uploads that studio shot, then sends it to Bria for scene generation.
+ *
+ * This produces MUCH better output than a flat-color background — Bria generates
+ * a realistic scene around the product while preserving product fidelity.
+ *
+ * @param rawBuffer - Raw image buffer (unused directly, but kept for interface consistency)
+ * @param imageUrl - Public URL of the original image (used for BiRefNet)
+ * @param style - Style ID for scene prompt selection
+ * @param productCategory - Product category for cutout enhancement
+ * @returns Processed image buffer ready for upload
+ */
+export async function createBriaFallbackShot(
+  _rawBuffer: Buffer,
+  imageUrl: string,
+  style: string,
+  productCategory: string,
+): Promise<Buffer> {
+  const startMs = Date.now();
+  console.info(JSON.stringify({ event: 'bria_fallback_start', style, productCategory }));
+
+  // 1. Create a studio shot (BiRefNet cutout on white canvas with shadow)
+  const { studioBuffer } = await createStudioShot(imageUrl, productCategory);
+
+  // 2. Upload the studio shot to get a URL for Bria
+  const studioUrl = await uploadToStorage(studioBuffer, `bria_input_${Date.now()}.jpg`);
+
+  // 3. Generate a style-appropriate scene prompt
+  const scenePrompt = getBriaScenePrompt(style, productCategory);
+
+  // 4. Call Bria Product Shot via fal.ai
+  ensureFalConfig();
+
+  const briaResult = (await withTimeout(
+    fal.subscribe('fal-ai/bria/product-shot' as string, {
+      input: {
+        image_url: studioUrl,
+        scene_description: scenePrompt,
+        optimize_description: true,
+        num_results: 1,
+        fast: true,
+        placement_type: 'manual_padding',
+        padding_values: [80, 80, 80, 80],  // even padding — product centered
+        shot_size: [1024, 1024],
+      },
+      logs: false,
+    }),
+    60_000,
+    'bria_product_shot',
+  )) as { data: { images?: Array<{ url: string }> } };
+
+  const outputUrl = briaResult.data?.images?.[0]?.url;
+  if (!outputUrl) throw new Error('Bria Product Shot returned no image');
+
+  const outputBuffer = await downloadBuffer(outputUrl);
+  console.info(JSON.stringify({ event: 'bria_fallback_complete', durationMs: Date.now() - startMs }));
   return outputBuffer;
 }
 
