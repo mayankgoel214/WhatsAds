@@ -29,6 +29,8 @@ export async function transitionTo(
   extraFields?: Partial<{
     currentOrderId: string | null;
     styleSelection: string | null;
+    styleSelections: string[];
+    stylePickStep: number;
     voiceInstructions: string | null;
     imageMediaIds: string[];
     imageStorageUrls: string[];

@@ -12,10 +12,11 @@ import { uploadFile, Buckets } from '@whatsads/storage';
 import { transitionTo, updateUser } from '../db-helpers.js';
 import { downloadWhatsAppMedia, mimeToExt } from './instructions.js';
 import {
-  msgAskStyle,
   styleDisplayName,
+  msgAllStylesReady,
+  msgSendProductPhotos,
 } from '../messages.js';
-import { ListIds, ButtonIds, CATEGORY_STYLE_RECOMMENDATION } from '../types.js';
+import { ListIds, ButtonIds, CATEGORY_STYLE_RECOMMENDATION, OUTPUT_STYLES_PER_ORDER } from '../types.js';
 import type { MessageContext } from '../types.js';
 import { logger } from '../logger.js';
 
@@ -40,28 +41,48 @@ export async function handleIdle(
     const buttonId = message.buttonReplyId;
 
     if (buttonId === ButtonIds.SAME_STYLE && user.lastStyleUsed) {
-      // Use the same style — transition to AWAITING_PHOTO
+      // Restore the previous styleSelections if available, otherwise fall back to lastStyleUsed
+      const prevSession = await prisma.session.findUnique({
+        where: { phoneNumber: session.phoneNumber },
+        select: { styleSelections: true },
+      });
+      const prevSelections = prevSession?.styleSelections ?? [];
+      const selections = prevSelections.length >= OUTPUT_STYLES_PER_ORDER
+        ? prevSelections
+        : [user.lastStyleUsed];
+
       await transitionTo(session.phoneNumber, 'AWAITING_PHOTO', {
-        styleSelection: user.lastStyleUsed,
+        styleSelection: selections[0] ?? user.lastStyleUsed,
+        styleSelections: selections,
+        stylePickStep: 0,
         imageMediaIds: [],
         imageStorageUrls: [],
         voiceInstructions: null,
         currentOrderId: null,
         earlyPhotoMediaId: null,
       });
-      const styleName = styleDisplayName(user.lastStyleUsed, lang);
-      await wa.sendText(session.phoneNumber, lang === 'hi'
-        ? `${styleName} set! 📸 Photo bhejiye!`
-        : `${styleName} set! 📸 Send your photo!`);
+
+      if (selections.length >= OUTPUT_STYLES_PER_ORDER) {
+        const styleNames = selections.map(s => styleDisplayName(s, lang));
+        await wa.sendText(session.phoneNumber, msgAllStylesReady(lang, styleNames));
+      } else {
+        const styleName = styleDisplayName(user.lastStyleUsed, lang);
+        await wa.sendText(session.phoneNumber, lang === 'hi'
+          ? `${styleName} set! 📸 Photo bhejiye!`
+          : `${styleName} set! 📸 Send your photo!`);
+      }
+      await wa.sendText(session.phoneNumber, msgSendProductPhotos(lang));
       return;
     }
 
     if (buttonId === ButtonIds.NEW_STYLE || buttonId === 'try_new_style') {
-      // Show style list
+      // Show style list — fresh 3-step picker
       await transitionTo(session.phoneNumber, 'SETUP_STYLE', {
+        styleSelections: [],
+        stylePickStep: 0,
         earlyPhotoMediaId: null,
       });
-      await sendStyleList(session.phoneNumber, lang, wa, user.businessType ?? undefined);
+      await sendStyleList(session.phoneNumber, lang, wa, user.businessType ?? undefined, []);
       return;
     }
   }
@@ -70,6 +91,16 @@ export async function handleIdle(
     // --- Returning user with saved style: confirm ---
     if (user.lastStyleUsed) {
       const styleName = styleDisplayName(user.lastStyleUsed, lang);
+
+      // Check if they have a full 3-style selection saved
+      const prevSession = await prisma.session.findUnique({
+        where: { phoneNumber: session.phoneNumber },
+        select: { styleSelections: true },
+      });
+      const hasFullPack = (prevSession?.styleSelections ?? []).length >= OUTPUT_STYLES_PER_ORDER;
+      const sameLabel = hasFullPack
+        ? (lang === 'hi' ? 'Same 3 styles' : 'Same 3 styles')
+        : (lang === 'hi' ? 'Haan, wahi' : 'Yes, same');
 
       // If they sent a photo directly, download + upload immediately, then ask style
       if (message.messageType === 'image' && message.mediaId) {
@@ -100,43 +131,52 @@ export async function handleIdle(
             currentOrderId: null,
           },
         });
+        const bodyText = hasFullPack
+          ? (lang === 'hi'
+            ? `Photo mil gayi, ${user.name} ji!\nPehle ke 3 styles use karein?`
+            : `Got your photo, ${user.name}!\nUse your previous 3 styles?`)
+          : (lang === 'hi'
+            ? `Photo mil gayi, ${user.name} ji!\n${styleName} style lagayein?`
+            : `Got your photo, ${user.name}!\nUse ${styleName} style?`);
         try {
           await wa.sendButtons(
             session.phoneNumber,
-            lang === 'hi'
-              ? `Photo mil gayi, ${user.name} ji!\n${styleName} style lagayein?`
-              : `Got your photo, ${user.name}!\nUse ${styleName} style?`,
+            bodyText,
             [
-              { id: ButtonIds.SAME_STYLE, title: lang === 'hi' ? 'Haan' : 'Yes' },
-              { id: ButtonIds.NEW_STYLE, title: lang === 'hi' ? 'Naya style' : 'New style' },
+              { id: ButtonIds.SAME_STYLE, title: sameLabel },
+              { id: ButtonIds.NEW_STYLE, title: lang === 'hi' ? 'Naye styles' : 'New styles' },
             ],
           );
         } catch (btnErr) {
           logger.error('sendButtons failed in handleIdle (photo path), falling back to sendText', { phoneNumber: session.phoneNumber, error: String(btnErr) });
           await wa.sendText(session.phoneNumber, lang === 'hi'
             ? `Photo mil gayi, ${user.name} ji! Kaunsa style: "${styleName}" ya naya?`
-            : `Got your photo, ${user.name}! Use "${styleName}" style or pick a new one?`);
+            : `Got your photo, ${user.name}! Use "${styleName}" style or pick new ones?`);
         }
         return;
       }
 
       // Text message: show style confirmation
-      logger.info('Sending returning-user style confirmation buttons', { phoneNumber: session.phoneNumber, styleName });
+      logger.info('Sending returning-user style confirmation buttons', { phoneNumber: session.phoneNumber, styleName, hasFullPack });
+      const confirmBody = hasFullPack
+        ? (lang === 'hi'
+          ? `${user.name} ji! Photo bhejiye — pehle ke 3 styles mein banayenge.\nStyles badalne hain?`
+          : `${user.name}! Send your photo — we'll use your previous 3 styles.\nWant different styles?`)
+        : (lang === 'hi'
+          ? `${user.name} ji! Photo bhejiye — ${styleName} mein banayenge.\nStyle badlana hai?`
+          : `${user.name}! Send your photo — we'll use ${styleName}.\nWant a different style?`);
       try {
         await wa.sendButtons(
           session.phoneNumber,
-          lang === 'hi'
-            ? `${user.name} ji! Photo bhejiye — ${styleName} mein banayenge.\nStyle badlana hai?`
-            : `${user.name}! Send your photo — we'll use ${styleName}.\nWant a different style?`,
+          confirmBody,
           [
-            { id: ButtonIds.SAME_STYLE, title: lang === 'hi' ? 'Haan, wahi' : 'Yes, same' },
-            { id: ButtonIds.NEW_STYLE, title: lang === 'hi' ? 'Naya style' : 'New style' },
+            { id: ButtonIds.SAME_STYLE, title: sameLabel },
+            { id: ButtonIds.NEW_STYLE, title: lang === 'hi' ? 'Naye styles' : 'New styles' },
           ],
         );
         logger.info('sendButtons succeeded', { phoneNumber: session.phoneNumber });
       } catch (btnErr) {
         logger.error('sendButtons failed in handleIdle, falling back to sendText', { phoneNumber: session.phoneNumber, error: String(btnErr) });
-        // Fallback: plain text works when interactive messages fail
         await wa.sendText(
           session.phoneNumber,
           lang === 'hi'
@@ -161,11 +201,13 @@ export async function handleIdle(
       imageMediaIds: [],
       imageStorageUrls: [],
       styleSelection: null,
+      styleSelections: [],
+      stylePickStep: 0,
       voiceInstructions: null,
       currentOrderId: null,
     });
     try {
-      await sendStyleList(session.phoneNumber, lang, wa, user.businessType ?? undefined);
+      await sendStyleList(session.phoneNumber, lang, wa, user.businessType ?? undefined, []);
     } catch (listErr) {
       logger.error('sendStyleList failed in handleIdle, falling back to sendText', { phoneNumber: session.phoneNumber, error: String(listErr) });
       await wa.sendText(session.phoneNumber, lang === 'hi'
@@ -279,8 +321,11 @@ export async function handleSetupCategory(
   await updateUser(session.phoneNumber, { businessType: categoryId });
 
   // INSTANT: transition to style and send style list — no filler message
-  await transitionTo(session.phoneNumber, 'SETUP_STYLE');
-  await sendStyleList(session.phoneNumber, lang, wa, categoryId);
+  await transitionTo(session.phoneNumber, 'SETUP_STYLE', {
+    styleSelections: [],
+    stylePickStep: 0,
+  });
+  await sendStyleList(session.phoneNumber, lang, wa, categoryId, []);
 }
 
 // ---------------------------------------------------------------------------
@@ -323,35 +368,51 @@ export async function sendStyleList(
   lang: 'hi' | 'en',
   wa: WhatsAppClient,
   categoryId?: string,
+  alreadyPicked: string[] = [],
 ): Promise<void> {
   const recStyleId = categoryId ? (CATEGORY_STYLE_RECOMMENDATION[categoryId] ?? null) : null;
+  const pickNumber = alreadyPicked.length + 1; // 1, 2, or 3
 
   const makeDesc = (id: string, desc: string) => {
     return id === recStyleId ? `${desc} -- Recommended` : desc;
   };
 
+  // All style rows (excluding already-picked styles)
+  const allStyleRows = [
+    { id: ListIds.STYLE_CLEAN_WHITE, title: styleDisplayName(ListIds.STYLE_CLEAN_WHITE, lang), description: makeDesc(ListIds.STYLE_CLEAN_WHITE, 'Pure white background') },
+    { id: ListIds.STYLE_LIFESTYLE, title: styleDisplayName(ListIds.STYLE_LIFESTYLE, lang), description: makeDesc(ListIds.STYLE_LIFESTYLE, 'Real-life setting') },
+    { id: ListIds.STYLE_GRADIENT, title: styleDisplayName(ListIds.STYLE_GRADIENT, lang), description: makeDesc(ListIds.STYLE_GRADIENT, 'Cinematic dark & dramatic') },
+    { id: ListIds.STYLE_OUTDOOR, title: styleDisplayName(ListIds.STYLE_OUTDOOR, lang), description: makeDesc(ListIds.STYLE_OUTDOOR, 'Natural outdoor scene') },
+    { id: ListIds.STYLE_STUDIO, title: styleDisplayName(ListIds.STYLE_STUDIO, lang), description: makeDesc(ListIds.STYLE_STUDIO, 'Colored backdrop studio') },
+    { id: ListIds.STYLE_FESTIVE, title: styleDisplayName(ListIds.STYLE_FESTIVE, lang), description: makeDesc(ListIds.STYLE_FESTIVE, 'Festive/Diwali vibes') },
+    { id: ListIds.STYLE_WITH_MODEL, title: styleDisplayName(ListIds.STYLE_WITH_MODEL, lang), description: makeDesc(ListIds.STYLE_WITH_MODEL, 'AI person with product') },
+  ].filter(row => !alreadyPicked.includes(row.id));
+
+  const headerText = lang === 'hi'
+    ? `Style ${pickNumber} of ${OUTPUT_STYLES_PER_ORDER} chuniye:`
+    : `Pick style ${pickNumber} of ${OUTPUT_STYLES_PER_ORDER}:`;
+
+  const rows: Array<{ id: string; title: string; description: string }> = [];
+
+  // Only show Smart Pack on first pick
+  if (alreadyPicked.length === 0) {
+    rows.push({
+      id: ListIds.SMART_PACK,
+      title: 'Smart Pack ✨',
+      description: lang === 'hi' ? 'AI aapke product ke liye 3 best styles chunega' : 'AI picks the best 3 styles for your product',
+    });
+  }
+
+  rows.push(...allStyleRows);
+
   await wa.sendList(
     phoneNumber,
-    lang === 'hi' ? 'Kaunsa style chahiye?' : 'Which style would you like?',
+    headerText,
     lang === 'hi' ? 'Chuniye' : 'Choose',
     [
       {
         title: 'Styles',
-        rows: [
-          {
-            id: ListIds.STYLE_SMART,
-            title: '✨ Smart Style',
-            description: lang === 'hi' ? 'AI aapke product ke liye best style chunega' : 'AI picks the best style for your product',
-          },
-          { id: ListIds.STYLE_CLEAN_WHITE, title: styleDisplayName(ListIds.STYLE_CLEAN_WHITE, lang), description: makeDesc(ListIds.STYLE_CLEAN_WHITE, 'Pure white background') },
-          { id: ListIds.STYLE_LIFESTYLE, title: styleDisplayName(ListIds.STYLE_LIFESTYLE, lang), description: makeDesc(ListIds.STYLE_LIFESTYLE, 'Real-life setting') },
-          { id: ListIds.STYLE_GRADIENT, title: styleDisplayName(ListIds.STYLE_GRADIENT, lang), description: makeDesc(ListIds.STYLE_GRADIENT, 'Cinematic dark & dramatic') },
-          { id: ListIds.STYLE_OUTDOOR, title: styleDisplayName(ListIds.STYLE_OUTDOOR, lang), description: makeDesc(ListIds.STYLE_OUTDOOR, 'Natural outdoor scene') },
-          { id: ListIds.STYLE_STUDIO, title: styleDisplayName(ListIds.STYLE_STUDIO, lang), description: makeDesc(ListIds.STYLE_STUDIO, 'Colored backdrop studio') },
-          { id: ListIds.STYLE_FESTIVE, title: styleDisplayName(ListIds.STYLE_FESTIVE, lang), description: makeDesc(ListIds.STYLE_FESTIVE, 'Festive/Diwali vibes') },
-          { id: ListIds.STYLE_MINIMAL, title: styleDisplayName(ListIds.STYLE_MINIMAL, lang), description: makeDesc(ListIds.STYLE_MINIMAL, 'Simple and clean') },
-          { id: ListIds.STYLE_WITH_MODEL, title: styleDisplayName(ListIds.STYLE_WITH_MODEL, lang), description: makeDesc(ListIds.STYLE_WITH_MODEL, 'AI person with product') },
-        ],
+        rows,
       },
     ],
   );

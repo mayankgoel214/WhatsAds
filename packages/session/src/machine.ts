@@ -119,6 +119,8 @@ export async function handleIncomingMessage(
           await transitionTo(phoneNumber, 'IDLE', {
             currentOrderId: null,
             styleSelection: null,
+            styleSelections: [],
+            stylePickStep: 0,
             voiceInstructions: null,
             imageMediaIds: [],
             imageStorageUrls: [],
@@ -141,6 +143,8 @@ export async function handleIncomingMessage(
         if (isEscapeIntent(message)) {
           logger.info('Escape intent in PROCESSING — resetting to IDLE (keeping currentOrderId)', { phoneNumber });
           await transitionTo(phoneNumber, 'IDLE', {
+            styleSelections: [],
+            stylePickStep: 0,
             imageMediaIds: [],
             imageStorageUrls: [],
             earlyPhotoMediaId: null,
@@ -186,6 +190,8 @@ export async function handleIncomingMessage(
           logger.info('Escape intent in EDIT_PROCESSING — resetting to IDLE', { phoneNumber });
           await transitionTo(phoneNumber, 'IDLE', {
             currentOrderId: null,
+            styleSelections: [],
+            stylePickStep: 0,
             imageMediaIds: [],
             imageStorageUrls: [],
             earlyPhotoMediaId: null,

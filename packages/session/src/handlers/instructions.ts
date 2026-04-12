@@ -8,8 +8,8 @@ import { downloadMedia } from '@whatsads/whatsapp';
 import type { Session, User } from '@whatsads/db';
 import { prisma } from '@whatsads/db';
 import { transitionTo } from '../db-helpers.js';
-import { msgPhotoReceivedWithPayment, msgProcessingStarted, styleDisplayName } from '../messages.js';
-import { PRICE_PER_IMAGE_PAISE, ButtonIds } from '../types.js';
+import { msgPhotoReceivedWithPayment, msgProcessingStarted } from '../messages.js';
+import { PRICE_PER_ORDER_PAISE, OUTPUT_STYLES_PER_ORDER, ButtonIds } from '../types.js';
 import { sendPaymentLink, enqueueImageJobs } from './payment.js';
 import { logger } from '../logger.js';
 
@@ -54,24 +54,37 @@ export interface CreateOrderParams {
   imageStorageUrls: string[];
   imageMediaIds: string[];
   imageCount: number;
-  styleId: string;
+  /** All 3 styles selected for this order */
+  styleSelections: string[];
   voiceInstructions: string | null;
 }
 
 export async function createOrderAndSendPayment(params: CreateOrderParams): Promise<void> {
-  const { session, user, lang, wa, imageStorageUrls, imageMediaIds, imageCount, styleId, voiceInstructions } = params;
+  const { session, user, lang, wa, imageStorageUrls, imageMediaIds, imageCount, styleSelections, voiceInstructions } = params;
   const phoneNumber = session.phoneNumber;
 
+  // V2 model: fixed Rs 199 per order regardless of photo count, always 3 style outputs.
+  // Ensure we always have OUTPUT_STYLES_PER_ORDER entries — pad with fallback style if needed.
+  const normalizedStyles =
+    styleSelections.length >= OUTPUT_STYLES_PER_ORDER
+      ? styleSelections.slice(0, OUTPUT_STYLES_PER_ORDER)
+      : [
+          ...styleSelections,
+          ...Array(OUTPUT_STYLES_PER_ORDER - styleSelections.length).fill(styleSelections[0] ?? 'style_clean_white'),
+        ];
+
+  const primaryStyleId = normalizedStyles[0] ?? 'style_clean_white';
   const isFreeOrder = user.orderCount === 0;
-  const amount = isFreeOrder ? 0 : imageCount * PRICE_PER_IMAGE_PAISE;
-  const styleName = styleDisplayName(styleId, lang);
+  const amount = isFreeOrder ? 0 : PRICE_PER_ORDER_PAISE;
 
   // Create order
   const order = await prisma.order.create({
     data: {
       phoneNumber,
       imageCount,
-      style: styleId,
+      style: primaryStyleId,              // backward compat — first style
+      stylesOrdered: normalizedStyles,    // all 3 styles
+      outputStyleCount: OUTPUT_STYLES_PER_ORDER,
       voiceInstructions,
       inputImageUrls: imageStorageUrls,
       status: 'payment_pending',
@@ -82,7 +95,7 @@ export async function createOrderAndSendPayment(params: CreateOrderParams): Prom
   });
 
   const totalRs = amount / 100;
-  const confirmationMsg = msgPhotoReceivedWithPayment(lang, user.name ?? '', imageCount, styleName, totalRs);
+  const confirmationMsg = msgPhotoReceivedWithPayment(lang, user.name ?? '', imageCount, normalizedStyles, totalRs);
 
   if (isFreeOrder) {
     // Free order — skip payment, set to processing BEFORE enqueuing
@@ -94,7 +107,7 @@ export async function createOrderAndSendPayment(params: CreateOrderParams): Prom
 
     await transitionTo(phoneNumber, 'PROCESSING', {
       currentOrderId: order.id,
-      styleSelection: styleId,
+      styleSelection: primaryStyleId,
     });
 
     const processingMsg = msgProcessingStarted(lang);
@@ -110,7 +123,7 @@ export async function createOrderAndSendPayment(params: CreateOrderParams): Prom
 
     const updatedSession = await transitionTo(phoneNumber, 'AWAITING_PAYMENT', {
       currentOrderId: order.id,
-      styleSelection: styleId,
+      styleSelection: primaryStyleId,
     });
 
     await sendPaymentLink(updatedSession, user, wa);

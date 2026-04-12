@@ -10,8 +10,8 @@ import type { Session, User } from '@whatsads/db';
 import { prisma } from '@whatsads/db';
 import { getImageQueue } from '@whatsads/queue';
 import { transitionTo } from '../db-helpers.js';
-import { styleDisplayName, msgSendPhoto, msgRevisionLimitReached } from '../messages.js';
-import { ListIds, ButtonIds, FREE_REDOS_PER_IMAGE } from '../types.js';
+import { styleDisplayName, msgSendPhoto, msgRevisionLimitReached, msgStylePicked, msgAllStylesReady, msgSendProductPhotos } from '../messages.js';
+import { ListIds, ButtonIds, FREE_REDOS_PER_IMAGE, OUTPUT_STYLES_PER_ORDER } from '../types.js';
 import type { MessageContext } from '../types.js';
 import { logger } from '../logger.js';
 
@@ -67,15 +67,32 @@ export async function handleSetupStyle(
       text: message.text,
     }));
     const { sendStyleList } = await import('./onboarding.js');
-    await sendStyleList(phoneNumber, lang, wa, user.businessType ?? undefined);
+    const alreadyPicked = (session.styleSelections as string[]) ?? [];
+    await sendStyleList(phoneNumber, lang, wa, user.businessType ?? undefined, alreadyPicked);
     return;
   }
 
-  // Smart Style: resolve to category-appropriate style before saving
-  if (styleId === ListIds.STYLE_SMART) {
-    const resolvedStyle = resolveSmartStyle(user.businessType ?? null);
-    logger.info(JSON.stringify({ event: 'smart_style_selected', category: user.businessType, resolved: resolvedStyle }));
-    styleId = resolvedStyle;
+  // --- Smart Pack: auto-select 3 styles and go straight to AWAITING_PHOTO ---
+  if (styleId === ListIds.SMART_PACK) {
+    const smartStyles = resolveSmartPack(user.businessType ?? null);
+    logger.info(JSON.stringify({ event: 'smart_pack_selected', category: user.businessType, styles: smartStyles }));
+
+    const styleNames = smartStyles.map(s => styleDisplayName(s, lang));
+    await wa.sendText(phoneNumber, msgAllStylesReady(lang, styleNames));
+
+    await transitionTo(phoneNumber, 'AWAITING_PHOTO', {
+      styleSelection: smartStyles[0],
+      styleSelections: smartStyles,
+      stylePickStep: 0,
+      imageMediaIds: [],
+      imageStorageUrls: [],
+      voiceInstructions: null,
+      currentOrderId: null,
+      earlyPhotoMediaId: null,
+    });
+
+    await wa.sendText(phoneNumber, msgSendProductPhotos(lang));
+    return;
   }
 
   const styleName = styleDisplayName(styleId, lang);
@@ -164,9 +181,41 @@ export async function handleSetupStyle(
     }
   }
 
-  // Normal flow: new order, ask for photo
+  // --- 3-step style picker flow ---
+  const currentPicked = (session.styleSelections as string[]) ?? [];
+  const currentStep = typeof session.stylePickStep === 'number' ? session.stylePickStep : 0;
+  const updatedSelections = [...currentPicked, styleId];
+  const newStep = currentStep + 1;
+
+  logger.info('Style step picked', { phoneNumber, styleId, newStep, total: OUTPUT_STYLES_PER_ORDER });
+
+  if (newStep < OUTPUT_STYLES_PER_ORDER) {
+    // More styles to pick — save progress and show next list
+    await prisma.session.update({
+      where: { phoneNumber },
+      data: {
+        styleSelections: updatedSelections,
+        stylePickStep: newStep,
+        // Keep styleSelection as first pick for backward compat
+        styleSelection: updatedSelections[0] ?? null,
+      },
+    });
+
+    await wa.sendText(phoneNumber, msgStylePicked(lang, styleName, newStep));
+
+    const { sendStyleList } = await import('./onboarding.js');
+    await sendStyleList(phoneNumber, lang, wa, user.businessType ?? undefined, updatedSelections);
+    return;
+  }
+
+  // All 3 styles picked — transition to AWAITING_PHOTO
+  const styleNames = updatedSelections.map(s => styleDisplayName(s, lang));
+  await wa.sendText(phoneNumber, msgAllStylesReady(lang, styleNames));
+
   await transitionTo(phoneNumber, 'AWAITING_PHOTO', {
-    styleSelection: styleId,
+    styleSelection: updatedSelections[0],
+    styleSelections: updatedSelections,
+    stylePickStep: 0,
     imageMediaIds: [],
     imageStorageUrls: [],
     voiceInstructions: null,
@@ -174,34 +223,32 @@ export async function handleSetupStyle(
     earlyPhotoMediaId: null,
   });
 
-  const isFirstOrder = (user.orderCount ?? 0) === 0;
-  const photoPrompt = msgSendPhoto(lang, isFirstOrder);
-  await wa.sendText(phoneNumber, `*${styleName}* set! 📸 ${photoPrompt}`);
+  await wa.sendText(phoneNumber, msgSendProductPhotos(lang));
 
-  logger.info('Style selected, awaiting photo', { phoneNumber, styleId });
+  logger.info('All 3 styles selected, awaiting photo', { phoneNumber, styles: updatedSelections });
 }
 
 // ---------------------------------------------------------------------------
 
-// style_smart is intentionally included so the list reply is accepted;
-// it is resolved to a concrete style before being saved to the session.
-const VALID_STYLE_IDS = new Set<string>(Object.values(ListIds).filter(id => id.startsWith('style_')));
+// smart_pack is intentionally included so the list reply is accepted;
+// it is resolved to 3 concrete styles before being saved to the session.
+const VALID_STYLE_IDS = new Set<string>(
+  [...Object.values(ListIds).filter(id => id.startsWith('style_')), ListIds.SMART_PACK],
+);
 
 /**
- * Resolves "Smart Style" to the best concrete style for the given product category.
- * Must stay in sync with CATEGORY_STYLE_RECOMMENDATION in types.ts.
+ * Resolves Smart Pack to the 3 best concrete styles for the given product category.
  */
-function resolveSmartStyle(category: string | null): string {
-  const mapping: Record<string, string> = {
-    cat_jewellery: 'style_gradient',   // Dark luxury makes jewellery shine
-    cat_food: 'style_lifestyle',        // Food in context looks appetizing
-    cat_garment: 'style_lifestyle',     // Garments need lifestyle context
-    cat_skincare: 'style_minimal',      // Clean, premium feel for skincare
-    cat_candle: 'style_lifestyle',      // Candles in cozy settings
-    cat_bag: 'style_outdoor',          // Bags look great outdoors
-    cat_general: 'style_studio',       // Studio works for most products
+function resolveSmartPack(category: string | null): string[] {
+  const mapping: Record<string, string[]> = {
+    cat_jewellery: ['style_gradient', 'style_lifestyle', 'style_clean_white'],
+    cat_food: ['style_lifestyle', 'style_outdoor', 'style_studio'],
+    cat_garment: ['style_lifestyle', 'style_with_model', 'style_clean_white'],
+    cat_skincare: ['style_clean_white', 'style_lifestyle', 'style_gradient'],
+    cat_candle: ['style_lifestyle', 'style_festive', 'style_gradient'],
+    cat_bag: ['style_lifestyle', 'style_outdoor', 'style_studio'],
   };
-  return mapping[category ?? ''] ?? 'style_studio';
+  return mapping[category ?? ''] ?? ['style_lifestyle', 'style_studio', 'style_gradient'];
 }
 
 function resolveStyleFromText(text: string): string | null {
@@ -211,7 +258,7 @@ function resolveStyleFromText(text: string): string | null {
   if (text.includes('outdoor') || text.includes('bahar') || text.includes('nature')) return ListIds.STYLE_OUTDOOR;
   if (text.includes('studio') || text.includes('professional')) return ListIds.STYLE_STUDIO;
   if (text.includes('festive') || text.includes('tyohar') || text.includes('festival')) return ListIds.STYLE_FESTIVE;
-  if (text.includes('minimal') || text.includes('simple')) return ListIds.STYLE_MINIMAL;
+  if (text.includes('minimal') || text.includes('simple')) return 'style_minimal';
   if (text.includes('model') || text.includes('person') || text.includes('human')) return ListIds.STYLE_WITH_MODEL;
   return null;
 }

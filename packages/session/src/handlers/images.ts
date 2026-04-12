@@ -531,14 +531,19 @@ async function advanceToPayment(
     return;
   }
 
-  const styleId = fresh.styleSelection ?? 'style_clean_white';
+  // V2: use all 3 selected styles; fall back to single styleSelection for legacy sessions
+  const sessionStyleSelections = (fresh.styleSelections as string[]) ?? [];
+  const styleSelections =
+    sessionStyleSelections.length > 0
+      ? sessionStyleSelections
+      : [fresh.styleSelection ?? 'style_clean_white'];
 
   try {
     console.info(JSON.stringify({
       event: 'advance_to_payment_start',
       phoneNumber,
       imageCount: fresh.imageStorageUrls.length,
-      style: styleId,
+      styles: styleSelections,
       hasInstructions: !!fresh.voiceInstructions,
     }));
 
@@ -550,7 +555,7 @@ async function advanceToPayment(
       imageStorageUrls: fresh.imageStorageUrls,
       imageMediaIds: fresh.imageMediaIds,
       imageCount: fresh.imageStorageUrls.length,
-      styleId,
+      styleSelections,
       voiceInstructions: fresh.voiceInstructions,
     });
 

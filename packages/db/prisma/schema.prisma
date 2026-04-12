@@ -100,6 +100,8 @@ model Session {
   state               SessionState @default(IDLE)
   currentOrderId      String?      @map("current_order_id") @db.Uuid
   styleSelection      String?      @map("style_selection")
+  styleSelections     String[]     @default([]) @map("style_selections")
+  stylePickStep       Int          @default(0) @map("style_pick_step")
   voiceInstructions   String?      @map("voice_instructions")
   imageMediaIds       String[]     @map("image_media_ids")
   imageStorageUrls    String[]     @map("image_storage_urls")
@@ -125,6 +127,10 @@ model Order {
   phoneNumber             String      @map("phone_number")
   imageCount              Int         @default(1) @map("image_count")
   style                   String?
+  stylesOrdered           String[]    @default([]) @map("styles_ordered")
+  productProfile          Json?       @map("product_profile")
+  primaryInputImageUrl    String?     @map("primary_input_image_url")
+  outputStyleCount        Int         @default(1) @map("output_style_count")
   voiceInstructions       String?     @map("voice_instructions")
   inputImageUrls          String[]    @map("input_image_urls")
   outputImageUrls         String[]    @map("output_image_urls")
@@ -212,6 +218,9 @@ model ImageJob {
   outputImageUrl  String?     @map("output_image_url")
   cutoutUrl       String?     @map("cutout_url")
   style           String?
+  styleIndex      Int?        @map("style_index")
+  revisionsUsed   Int         @default(0) @map("revisions_used")
+  maxFreeRevisions Int        @default(1) @map("max_free_revisions")
   promptUsed      String?     @map("prompt_used")
   pipeline        JobPipeline @default(primary)
   status          JobStatus   @default(queued)

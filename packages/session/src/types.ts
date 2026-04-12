@@ -38,13 +38,22 @@ export interface MessageContext {
 // Pricing constants
 // ---------------------------------------------------------------------------
 
-/** Price per image in paise (Rs 99) */
+/** Price per order in paise (Rs 199 for 3 style ads) */
+export const PRICE_PER_ORDER_PAISE = 19900;
+
+/** Number of style ad outputs generated per order */
+export const OUTPUT_STYLES_PER_ORDER = 3;
+
+/** Free redos per style output */
+export const FREE_REDOS_PER_STYLE = 1;
+
+/** @deprecated Use PRICE_PER_ORDER_PAISE instead. Price per image in paise (Rs 99) */
 export const PRICE_PER_IMAGE_PAISE = 9900;
 
 /** Edit revision fee in paise (Rs 29) */
 export const EDIT_REVISION_PAISE = 2900;
 
-/** Maximum images per order */
+/** Maximum reference photos per order (angle shots of the same product) */
 export const MAX_IMAGES_PER_ORDER = 5;
 
 /**
@@ -119,13 +128,12 @@ export const ListIds = {
   CAT_BAG: 'cat_bag',
   CAT_GENERAL: 'cat_general',
   // Styles
-  STYLE_SMART: 'style_smart',
+  SMART_PACK: 'smart_pack',
   STYLE_CLEAN_WHITE: 'style_clean_white',
   STYLE_LIFESTYLE: 'style_lifestyle',
   STYLE_GRADIENT: 'style_gradient',
   STYLE_OUTDOOR: 'style_outdoor',
   STYLE_STUDIO: 'style_studio',
   STYLE_FESTIVE: 'style_festive',
-  STYLE_MINIMAL: 'style_minimal',
   STYLE_WITH_MODEL: 'style_with_model',
 } as const;

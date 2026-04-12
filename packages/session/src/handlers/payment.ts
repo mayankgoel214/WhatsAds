@@ -163,76 +163,37 @@ export async function enqueueImageJobs(
   order: Order,
 ): Promise<void> {
   const imageQueue = getImageQueue();
-  const imageUrls = order.inputImageUrls as string[];
-  const rawInstructionsFromOrder = order.voiceInstructions as string | null;
+  const inputImageUrls = order.inputImageUrls as string[];
+  const voiceInstructions = order.voiceInstructions as string | null;
+
+  // V2 model: 1 job per OUTPUT STYLE (always OUTPUT_STYLES_PER_ORDER = 3).
+  // Each job uses the primary input photo and one of the 3 ordered styles.
+  // Fall back to the legacy single-style path for old orders where stylesOrdered is empty.
+  const stylesOrdered = (order.stylesOrdered as string[]) ?? [];
+  const primaryInputImageUrl = inputImageUrls[0] ?? '';
+
+  const styleJobs: Array<{ styleId: string; styleIndex: number }> =
+    stylesOrdered.length > 0
+      ? stylesOrdered.map((styleId, i) => ({ styleId, styleIndex: i }))
+      : [{ styleId: order.style ?? 'style_clean_white', styleIndex: 0 }]; // legacy single-job path
 
   console.info(JSON.stringify({
     event: 'enqueue_image_jobs_start',
     orderId,
-    imageCount: imageUrls.length,
-    hasInstructions: !!rawInstructionsFromOrder,
-    rawInstructions: rawInstructionsFromOrder?.slice(0, 100),
+    inputPhotoCount: inputImageUrls.length,
+    outputJobCount: styleJobs.length,
+    styles: styleJobs.map(j => j.styleId),
+    hasInstructions: !!voiceInstructions,
   }));
 
-  // --- Per-photo instruction parsing ---
-  let perPhotoInstructions: Record<string, string | null> = {};
-  let globalInstruction: string | null = null;
-  const rawInstructions = order.voiceInstructions as string | null;
-
-  if (imageUrls.length > 1 && rawInstructions) {
-    try {
-      const { parsePerPhotoInstructions } = await import('@whatsads/ai');
-      const parseResult = await parsePerPhotoInstructions({
-        imageUrls: imageUrls,
-        rawInstructions,
-      });
-
-      if (parseResult.confidence >= 0.4) {
-        perPhotoInstructions = parseResult.assignments;
-        globalInstruction = parseResult.globalInstruction;
-        logger.info('Per-photo instructions parsed', {
-          orderId,
-          confidence: parseResult.confidence,
-          assignmentCount: Object.values(parseResult.assignments).filter(v => v !== null).length,
-          hasGlobal: !!parseResult.globalInstruction,
-        });
-      } else {
-        logger.info('Per-photo instructions low confidence', {
-          orderId,
-          confidence: parseResult.confidence,
-        });
-      }
-    } catch (err) {
-      logger.warn('Per-photo instructions parsing failed', {
-        orderId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      // Fall back to raw instructions for all photos
-    }
-  }
-
-  for (let i = 0; i < imageUrls.length; i++) {
-    const url = imageUrls[i]!;
-
-    // Build per-photo instruction: specific + global merged
-    const specificInstruction = perPhotoInstructions[String(i)] ?? null;
-    let finalInstruction: string | undefined;
-
-    if (specificInstruction && globalInstruction) {
-      finalInstruction = `${specificInstruction}. ${globalInstruction}`;
-    } else if (specificInstruction) {
-      finalInstruction = specificInstruction;
-    } else if (globalInstruction) {
-      finalInstruction = globalInstruction;
-    } else {
-      finalInstruction = rawInstructions ?? undefined;
-    }
-
+  for (const { styleId, styleIndex } of styleJobs) {
     const imageJob = await prisma.imageJob.create({
       data: {
         orderId,
-        inputImageUrl: url,
-        style: order.style ?? 'style_clean_white',
+        inputImageUrl: primaryInputImageUrl,
+        style: styleId,
+        styleIndex,
+        pipeline: 'primary',
         status: 'queued',
       },
     });
@@ -241,9 +202,9 @@ export async function enqueueImageJobs(
       orderId,
       imageJobId: imageJob.id,
       phoneNumber,
-      inputImageUrl: url,
-      style: order.style ?? 'style_clean_white',
-      voiceInstructions: finalInstruction,
+      inputImageUrl: primaryInputImageUrl,
+      style: styleId,
+      voiceInstructions: voiceInstructions ?? undefined,
       productCategory: order.productCategory ?? undefined,
       pipeline: 'primary',
     });
@@ -256,7 +217,8 @@ export async function enqueueImageJobs(
 
   logger.info('Image processing jobs enqueued', {
     orderId,
-    imageCount: order.inputImageUrls.length,
+    outputJobCount: styleJobs.length,
+    styles: styleJobs.map(j => j.styleId),
   });
 }
 
@@ -294,8 +256,8 @@ export async function sendPaymentLink(
     await wa.sendPaymentLink(
       phoneNumber,
       lang === 'hi'
-        ? `${order.imageCount} photo • Rs ${order.amount / 100}\nPayment karein:`
-        : `${order.imageCount} photo(s) • Rs ${order.amount / 100}\nPay to get started:`,
+        ? `${order.imageCount} photo • 3 professional ads • Rs ${order.amount / 100}\nPayment karein:`
+        : `${order.imageCount} photo(s) • 3 professional ads • Rs ${order.amount / 100}\nPay to get started:`,
       order.razorpayPaymentLinkUrl,
       lang === 'hi' ? 'Payment karo' : 'Pay Now',
     );
@@ -323,7 +285,7 @@ export async function sendPaymentLink(
       customerPhone: phoneNumber,
       customerName: user.name ?? undefined,
       amount: order.amount, // paise — always from DB, never client-provided
-      description: `Clickkar - ${order.imageCount} photo(s)`,
+      description: `Clickkar - ${order.imageCount} photo(s), 3 ads`,
       expiresInMinutes: 30,
     });
 
@@ -339,8 +301,8 @@ export async function sendPaymentLink(
     await wa.sendPaymentLink(
       phoneNumber,
       lang === 'hi'
-        ? `${order.imageCount} photo • Rs ${order.amount / 100}\nPayment karein:`
-        : `${order.imageCount} photo(s) • Rs ${order.amount / 100}\nPay to get started:`,
+        ? `${order.imageCount} photo • 3 professional ads • Rs ${order.amount / 100}\nPayment karein:`
+        : `${order.imageCount} photo(s) • 3 professional ads • Rs ${order.amount / 100}\nPay to get started:`,
       link.shortUrl,
       lang === 'hi' ? 'Payment karo' : 'Pay Now',
     );

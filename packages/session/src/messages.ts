@@ -46,6 +46,32 @@ export function msgInstructionsReceived(lang: Lang): string {
 }
 
 // ---------------------------------------------------------------------------
+// STYLE PICKER (3-step flow)
+// ---------------------------------------------------------------------------
+
+export function msgStylePicked(lang: Lang, styleName: string, pickNumber: number): string {
+  if (lang === 'hi') {
+    return `✅ *${styleName}* choose kiya! (${pickNumber}/3)`;
+  }
+  return `✅ *${styleName}* picked! (${pickNumber}/3)`;
+}
+
+export function msgAllStylesReady(lang: Lang, styleNames: string[]): string {
+  const list = styleNames.map((n, i) => `${i + 1}. ${n}`).join('\n');
+  if (lang === 'hi') {
+    return `3 styles ready hain! ✨\n\n${list}\n\nAb product ki photos bhejiye!`;
+  }
+  return `3 styles ready! ✨\n\n${list}\n\nNow send your product photos!`;
+}
+
+export function msgSendProductPhotos(lang: Lang): string {
+  if (lang === 'hi') {
+    return 'Ab apne product ki photos bhejein! Ek hi product ki alag-alag angles se 1-5 photos bhej saktein hain. Jab ho jaye, "done" bolein.';
+  }
+  return 'Send photos of your product! You can send 1-5 photos of the SAME product from different angles. Say "done" when finished.';
+}
+
+// ---------------------------------------------------------------------------
 // RETURNING USER
 // ---------------------------------------------------------------------------
 
@@ -100,20 +126,20 @@ export function msgPhotoReceivedWithPayment(
   lang: Lang,
   name: string,
   imageCount: number,
-  styleName: string,
+  styleSelections: string[],
   totalRs: number,
 ): string {
   const photoText = imageCount > 1 ? `${imageCount} photos` : '1 photo';
   if (totalRs === 0) {
     if (lang === 'hi') {
-      return `Photo mil gayi, ${name} ji!\n${photoText} • ${styleName}\nPehli baar free hai! Rs 0`;
+      return `Photo mil gayi, ${name} ji!\n${photoText} • 3 professional ads\nAapka pehla order free hai! Rs 0`;
     }
-    return `Photo received, ${name}!\n${photoText} • ${styleName}\nYour first one is free! Rs 0`;
+    return `Photo received, ${name}!\n${photoText} • 3 professional ads\nYour first one is free! Rs 0`;
   }
   if (lang === 'hi') {
-    return `${name} ji, ${photoText} • ${styleName}\nRs ${totalRs} — UPI se 1 minute mein ho jayega.`;
+    return `Photo mil gayi, ${name} ji!\n${photoText} • 3 professional ads\nRs ${totalRs}`;
   }
-  return `${name}, ${photoText} • ${styleName}\nRs ${totalRs} via UPI — done in 1 minute.`;
+  return `Photo received, ${name}!\n${photoText} • 3 professional ads\nRs ${totalRs}`;
 }
 
 // ---------------------------------------------------------------------------
