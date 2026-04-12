@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="80" viewBox="0 0 96 80">
+  <g opacity="0.92">
+    <g transform="translate(24,0)">
+      <path d="M10 42 A20 20 0 0 1 10 18" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+      <path d="M10 18 L10 30 L22 18" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M10 30 L22 42" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="28" y1="12" x2="28" y2="46" stroke="#EF9F27" stroke-width="1.2" opacity="0.85"/>
+    </g>
+    <text x="48" y="70" font-family="Arial,Helvetica,sans-serif" font-weight="600" font-size="13" fill="white" letter-spacing="0.5" text-anchor="middle">clickkar</text>
+    <line x1="14" y1="58" x2="82" y2="58" stroke="white" stroke-width="0.5" opacity="0.2"/>
+  </g>
+</svg>
