@@ -337,13 +337,17 @@ export async function processProductImageV3(
     const isOutdoor = params.style === 'style_outdoor';
 
     const userInstructionBlock = params.voiceInstructions
-      ? `\nUSER'S REQUEST (apply ONLY what is relevant to the product in this photo):
+      ? `\nUSER'S CREATIVE DIRECTION (apply ONLY what is relevant to the product in this photo):
 "${params.voiceInstructions.slice(0, 300)}"
-IMPORTANT: This instruction may reference MULTIPLE products from different photos (e.g., "bag ko pink, watch ko gold"). Only follow the part that applies to the product shown in the input photo. If the instruction mentions a product that is NOT the product in this photo, IGNORE that part completely. Do NOT add other products (remotes, glasses, bags, etc.) to this image just because they are mentioned in the instruction. Each photo contains only ONE product — keep it that way.\n`
+RULES FOR APPLYING THIS INSTRUCTION:
+- This may reference MULTIPLE products from different photos (e.g., "bag ko pink, watch ko gold"). Only follow the part that applies to the product shown in this photo. IGNORE references to other products. Do NOT add other products to this image.
+- PRODUCT INTEGRITY: Color and style instructions apply to the SCENE/ENVIRONMENT only — NEVER alter the product itself. Do NOT change the product's colors, materials, strap, case, fabric, lid, label, or any physical attribute. The product must look IDENTICAL to the input photo. Only modify a product part if the user EXPLICITLY names it (e.g., "make the strap blue").
+- If the user mentions a COLOR for the background/scene: use that color as the DOMINANT TONE throughout the environment — in surfaces, lighting, props, atmosphere. Create a rich textured scene in that color, NOT a flat solid-color wall. Example: "red background" = warm red-toned scene with depth and dimension, not a plain red wall.
+- The instruction should enhance the creative brief below, not contradict it. Blend both together naturally.\n`
       : '';
 
     const colorEnforcement = validPlan.analysis?.dominantColors?.length
-      ? `The product's colors are: ${validPlan.analysis.dominantColors.join(', ')}. These colors MUST be preserved exactly — do not shift gold to silver, do not desaturate warm tones, do not change the material color under any lighting condition.`
+      ? `The product's colors are: ${validPlan.analysis.dominantColors.join(', ')}. These colors MUST be preserved EXACTLY as in the input photo — do not shift gold to silver, do not desaturate warm tones, do not change the material color under any lighting condition. Even if the user asks for a color change in the background/scene, the PRODUCT ITSELF stays these exact colors unless they explicitly name a product part to change.`
       : '';
 
     return `${getCameraSpec(params.style ?? 'style_lifestyle')}

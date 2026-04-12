@@ -604,7 +604,16 @@ CRITICAL CONSTRAINT FOR CREATIVE BRIEF: The creative brief must NEVER describe t
       .slice(0, 500)
       .replace(/[\x00-\x1F\x7F]/g, '') // strip control characters
       .replace(/\n{3,}/g, '\n\n'); // collapse excessive newlines
-    prompt += `\nUser's additional instructions (incorporate into concept): ${sanitizedInstructions}\n\n`;
+    prompt += `\n## USER'S CREATIVE DIRECTION
+"${sanitizedInstructions}"
+
+Integrate this into your creative concept for the chosen style. IMPORTANT RULES:
+- PRODUCT INTEGRITY IS SACRED: Color, setting, and mood instructions apply ONLY to the SCENE and ENVIRONMENT — NEVER to the product itself. The product's every physical attribute (colors, materials, strap color, case finish, fabric shade, label design, packaging color) must remain EXACTLY as in the input photo. "Make background red" means the SCENE is red — the product stays unchanged. Only modify the product's appearance if the user EXPLICITLY names a specific product part to change (e.g., "make the strap blue", "change the lid to gold").
+- If the user mentions a COLOR (e.g., "red background", "blue theme", "pink"), use that color as the DOMINANT TONE woven throughout the scene — in lighting, props, surfaces, atmosphere. Do NOT make a flat solid-color background. Create a rich, styled scene where that color PERMEATES the environment naturally.
+- If the user mentions a SETTING (e.g., "garden", "kitchen", "beach"), design the scene IN that setting while maintaining the chosen style's photography approach.
+- If the user mentions a MOOD or EFFECT (e.g., "dramatic", "festive", "luxury"), amplify that feeling through lighting, composition, and props.
+- The user's instruction should ENHANCE the chosen style, not override it. A "red background" in lifestyle style = warm red-toned kitchen/table setting. In gradient style = deep red gradient with dramatic lighting. In studio = rich red backdrop with professional lighting.
+- NEVER interpret color instructions as flat solid backgrounds — always create depth, texture, and dimension.\n\n`;
   }
 
   prompt += `Return this exact JSON structure:
