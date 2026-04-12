@@ -11,7 +11,7 @@ import { prisma } from '@whatsads/db';
 import { getImageQueue } from '@whatsads/queue';
 import { transitionTo } from '../db-helpers.js';
 import { styleDisplayName, msgSendPhoto, msgRevisionLimitReached } from '../messages.js';
-import { ListIds, ButtonIds, FREE_REVISIONS_PER_ORDER } from '../types.js';
+import { ListIds, ButtonIds, FREE_REDOS_PER_IMAGE } from '../types.js';
 import type { MessageContext } from '../types.js';
 import { logger } from '../logger.js';
 
@@ -84,9 +84,11 @@ export async function handleSetupStyle(
   if (session.currentOrderId) {
     const order = await prisma.order.findUnique({ where: { id: session.currentOrderId } });
     if (order && order.inputImageUrls.length > 0) {
-      // Check revision limits before reprocessing
-      if (order.revisionsUsed >= FREE_REVISIONS_PER_ORDER) {
-        await wa.sendText(phoneNumber, msgRevisionLimitReached(lang));
+      // Check revision limits: each image gets FREE_REDOS_PER_IMAGE free redo(s).
+      // Total free redos for the order = imageCount * FREE_REDOS_PER_IMAGE.
+      const totalFreeRedos = order.imageCount * FREE_REDOS_PER_IMAGE;
+      if (order.revisionsUsed >= totalFreeRedos) {
+        await wa.sendText(phoneNumber, msgRevisionLimitReached(lang, order.imageCount));
         await transitionTo(phoneNumber, 'DELIVERED');
         return;
       }
@@ -99,47 +101,65 @@ export async function handleSetupStyle(
           : `Reprocessing in *${styleName}* — just a moment!`,
       );
 
-      // Increment revision count and reset order status
+      const inputImageUrls = (order.inputImageUrls as string[]) ?? [];
+      const cutoutUrls = (order.cutoutUrls as string[]) ?? [];
+
+      // A style-change reprocesses every image — each consumes one free redo,
+      // so increment revisionsUsed by the number of images being reprocessed.
       await prisma.order.update({
         where: { id: order.id },
         data: {
           style: styleId,
-          revisionsUsed: { increment: 1 },
+          revisionsUsed: { increment: inputImageUrls.length },
           status: 'processing',
           processingStartedAt: new Date(),
           processingCompletedAt: null,
         },
       });
 
-      // Create ImageJob record for the style change
-      const editJobId = crypto.randomUUID();
-      await prisma.imageJob.create({
-        data: {
-          id: editJobId,
-          orderId: order.id,
-          inputImageUrl: order.cutoutUrls[0] || order.inputImageUrls[0] || '',
-          style: styleId,
-          status: 'queued',
-        },
-      });
-
-      // Enqueue re-processing job
+      // Create an ImageJob and enqueue a processing job for EVERY image in the order
       const queue = getImageQueue();
-      await queue.add('process_image', {
-        orderId: order.id,
-        imageJobId: editJobId,
-        phoneNumber: phoneNumber,
-        inputImageUrl: order.cutoutUrls[0] || order.inputImageUrls[0] || '',
-        style: styleId,
-        productCategory: order.productCategory ?? undefined,
-        pipeline: order.cutoutUrls.length > 0 ? 'fallback' : 'primary',
-      });
+      let jobsEnqueued = 0;
+
+      for (let i = 0; i < inputImageUrls.length; i++) {
+        const inputUrl = cutoutUrls[i] || inputImageUrls[i] || '';
+        if (!inputUrl) continue;
+
+        const editJobId = crypto.randomUUID();
+        await prisma.imageJob.create({
+          data: {
+            id: editJobId,
+            orderId: order.id,
+            inputImageUrl: inputUrl,
+            style: styleId,
+            status: 'queued',
+          },
+        });
+
+        await queue.add('process_image', {
+          orderId: order.id,
+          imageJobId: editJobId,
+          phoneNumber: phoneNumber,
+          inputImageUrl: inputUrl,
+          style: styleId,
+          productCategory: order.productCategory ?? undefined,
+          pipeline: cutoutUrls[i] ? 'fallback' : 'primary',
+        });
+
+        jobsEnqueued++;
+      }
 
       await transitionTo(phoneNumber, 'EDIT_PROCESSING', {
         styleSelection: styleId,
       });
 
-      logger.info('Style-change edit: reprocessing with new style', { phoneNumber, styleId, orderId: order.id });
+      logger.info('Style-change edit: reprocessing all images with new style', {
+        phoneNumber,
+        styleId,
+        orderId: order.id,
+        jobsEnqueued,
+        imageCount: inputImageUrls.length,
+      });
       return;
     }
   }

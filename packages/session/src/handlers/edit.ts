@@ -25,7 +25,7 @@ import {
   msgGenericError,
 } from '../messages.js';
 import {
-  FREE_REVISIONS_PER_ORDER,
+  FREE_REDOS_PER_IMAGE,
 } from '../types.js';
 import type { MessageContext } from '../types.js';
 import { logger } from '../logger.js';
@@ -56,10 +56,12 @@ export async function handleAwaitingEdit(
     return;
   }
 
-  // Check revision limits
-  if (order.revisionsUsed >= FREE_REVISIONS_PER_ORDER) {
+  // Check revision limits: each image gets FREE_REDOS_PER_IMAGE free redo(s).
+  // Total free redos for the order = imageCount * FREE_REDOS_PER_IMAGE.
+  const totalFreeRedos = order.imageCount * FREE_REDOS_PER_IMAGE;
+  if (order.revisionsUsed >= totalFreeRedos) {
     // TODO: send payment link for Rs 29 revision fee
-    await wa.sendText(session.phoneNumber, msgRevisionLimitReached(lang));
+    await wa.sendText(session.phoneNumber, msgRevisionLimitReached(lang, order.imageCount));
     await transitionTo(session.phoneNumber, 'DELIVERED');
     return;
   }
@@ -165,23 +167,30 @@ export async function handleAwaitingEdit(
           rawInstructions: editInstructions,
         });
 
-        if (parseResult.confidence >= 0.4) {
+        if (parseResult.confidence >= 0.25) {
           const cutoutUrls = (order.cutoutUrls as string[]) ?? [];
           let jobsCreated = 0;
 
+          // When confidence is low but assignments exist, fall back to global instruction for all photos
+          const useGlobalFallback =
+            parseResult.confidence < 0.4 &&
+            Object.keys(parseResult.assignments).length > 0;
+
           for (let i = 0; i < imageUrls.length; i++) {
-            const instruction = parseResult.assignments[String(i)] ?? parseResult.globalInstruction;
+            const instruction = useGlobalFallback
+              ? parseResult.globalInstruction
+              : (parseResult.assignments[String(i)] ?? parseResult.globalInstruction);
             if (!instruction) continue;
 
             const editUrl = cutoutUrls[i] || imageUrls[i] || '';
             if (!editUrl) continue;
 
-            // Only count as 1 revision total (on the first job)
+            // Each image counts as one redo; update order status on the first job only.
+            // The revisionsUsed total is incremented after the loop (once per image processed).
             if (jobsCreated === 0) {
               await prisma.order.update({
                 where: { id: order.id },
                 data: {
-                  revisionsUsed: { increment: 1 },
                   status: 'processing',
                   processingStartedAt: new Date(),
                   processingCompletedAt: null,
@@ -215,6 +224,11 @@ export async function handleAwaitingEdit(
           }
 
           if (jobsCreated > 0) {
+            // Each image processed consumes one free redo — increment by jobsCreated
+            await prisma.order.update({
+              where: { id: order.id },
+              data: { revisionsUsed: { increment: jobsCreated } },
+            });
             await transitionTo(session.phoneNumber, 'EDIT_PROCESSING');
             await wa.sendText(session.phoneNumber, lang === 'hi'
               ? `${jobsCreated} photos edit ho rahe hain... thodi der mein ready!`

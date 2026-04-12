@@ -221,11 +221,13 @@ export function msgEditProcessing(lang: Lang): string {
   return 'Applying your changes... ready shortly.';
 }
 
-export function msgRevisionLimitReached(lang: Lang): string {
+export function msgRevisionLimitReached(lang: Lang, imageCount = 1): string {
+  // Each image gets 1 free redo. Total free redos = imageCount.
+  const freeRedos = imageCount;
   if (lang === 'hi') {
-    return '2 free edits ho chuke hain is order ke liye. ✨\n\nNaya photo bhejne ke liye "hi" bhejein!';
+    return `${freeRedos} free redo${freeRedos > 1 ? 's' : ''} ho ${freeRedos > 1 ? 'chuke' : 'chuka'} hai is order ke liye (har image ke liye 1 free redo). ✨\n\nNaya photo bhejne ke liye "hi" bhejein!`;
   }
-  return 'You\'ve used your 2 free edits for this order. ✨\n\nSend "hi" to start a new photo!';
+  return `You've used your ${freeRedos} free redo${freeRedos > 1 ? 's' : ''} for this order (1 free redo per image). ✨\n\nSend "hi" to start a new photo!`;
 }
 
 // ---------------------------------------------------------------------------

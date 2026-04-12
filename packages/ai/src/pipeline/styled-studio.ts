@@ -40,6 +40,15 @@ const STYLE_BACKGROUNDS: Record<string, BackgroundConfig> = {
   style_model:       { r: 235, g: 230, b: 225, vignetteR: 200, vignetteG: 195, vignetteB: 185 },
 };
 
+// Festive gets RANDOMIZED rich colors — deep Indian festive palette
+const FESTIVE_COLOR_POOL: BackgroundConfig[] = [
+  { r: 120, g: 25,  b: 25,  vignetteR: 80,  vignetteG: 15,  vignetteB: 15  },  // Deep maroon
+  { r: 180, g: 120, b: 20,  vignetteR: 140, vignetteG: 90,  vignetteB: 10  },  // Saffron gold
+  { r: 20,  g: 80,  b: 45,  vignetteR: 10,  vignetteG: 55,  vignetteB: 30  },  // Emerald green
+  { r: 100, g: 20,  b: 60,  vignetteR: 70,  vignetteG: 10,  vignetteB: 40  },  // Royal magenta
+  { r: 30,  g: 30,  b: 90,  vignetteR: 15,  vignetteG: 15,  vignetteB: 65  },  // Royal blue
+];
+
 // Studio gets RANDOMIZED bold colors — never the same boring grey
 const STUDIO_COLOR_POOL: BackgroundConfig[] = [
   { r: 0,   g: 120, b: 130, vignetteR: 0,   vignetteG: 90,  vignetteB: 100 },  // Deep teal
@@ -57,6 +66,11 @@ function getBackgroundConfig(style: string): BackgroundConfig {
     // Random selection from the color pool
     const idx = Math.floor(Math.random() * STUDIO_COLOR_POOL.length);
     return STUDIO_COLOR_POOL[idx]!;
+  }
+  if (style === 'style_festive') {
+    // Random selection from the festive color pool
+    const idx = Math.floor(Math.random() * FESTIVE_COLOR_POOL.length);
+    return FESTIVE_COLOR_POOL[idx]!;
   }
   return STYLE_BACKGROUNDS[style] ?? { r: 240, g: 240, b: 240 };
 }

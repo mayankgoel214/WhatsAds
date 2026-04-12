@@ -13,6 +13,7 @@ export interface FocusedCheckResult {
   anatomyDescription: string | null;
   hasComponentIssue: boolean;
   componentDescription: string;
+  instructionFollowed: boolean;
   pass: boolean;
   failReasons: string[];
 }
@@ -253,13 +254,27 @@ export async function runFocusedChecks(
     anatomyDescription: null,
     hasComponentIssue: false,
     componentDescription: 'none',
+    instructionFollowed: true,
     pass: true,
     failReasons: [],
   };
 
-  // Fire all 5 checks in parallel with timeout
+  // Build instruction compliance check promise (only when voiceInstructions is provided)
+  const instructionCheckPromise = voiceInstructions
+    ? withTimeout(
+        askBinaryQuestion(
+          client,
+          outputBuffer,
+          `Does this image follow the user's instruction: '${voiceInstructions}'? Answer yes if the instruction was clearly incorporated into the scene. Answer no if the instruction was ignored or not visible.`,
+        ).then((raw) => ({ followed: raw.toUpperCase().startsWith('YES'), raw })),
+        TIMEOUT_MS,
+        { followed: true, raw: 'timeout' }, // default pass on timeout — informational only
+      )
+    : Promise.resolve({ followed: true, raw: 'no_instructions' });
+
+  // Fire all checks in parallel with timeout
   // CRITICAL: timeout defaults to FAIL (not pass) to prevent bad images slipping through
-  const [countResult, defectResult, textResult, anatomyResult, componentResult] = await Promise.all([
+  const [countResult, defectResult, textResult, anatomyResult, componentResult, instructionResult] = await Promise.all([
     withTimeout(
       checkProductCount(client, outputBuffer, productName),
       TIMEOUT_MS,
@@ -285,6 +300,7 @@ export async function runFocusedChecks(
       TIMEOUT_MS,
       { allComponentsPresent: true, missingComponents: 'check failed' }, // default pass on timeout
     ),
+    instructionCheckPromise,
   ]);
 
   result.productCount = countResult.count;
@@ -295,6 +311,7 @@ export async function runFocusedChecks(
   result.anatomyDescription = anatomyResult.description;
   result.hasComponentIssue = !componentResult.allComponentsPresent;
   result.componentDescription = componentResult.missingComponents;
+  result.instructionFollowed = instructionResult.followed;
 
   console.info(JSON.stringify({
     event: 'focused_checks_complete',
@@ -307,6 +324,8 @@ export async function runFocusedChecks(
     anatomyDescription: anatomyResult.description,
     hasComponentIssue: result.hasComponentIssue,
     componentDescription: result.componentDescription,
+    instructionFollowed: instructionResult.followed,
+    instructionRaw: instructionResult.raw,
   }));
 
   // Evaluate pass/fail

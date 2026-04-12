@@ -47,7 +47,13 @@ export const EDIT_REVISION_PAISE = 2900;
 /** Maximum images per order */
 export const MAX_IMAGES_PER_ORDER = 5;
 
-/** Free revisions per order */
+/**
+ * Free redos per image. Each image the customer paid for gets this many
+ * free regenerations. Total free redos for an order = imageCount * FREE_REDOS_PER_IMAGE.
+ */
+export const FREE_REDOS_PER_IMAGE = 1;
+
+/** @deprecated Use FREE_REDOS_PER_IMAGE instead. */
 export const FREE_REVISIONS_PER_ORDER = 2;
 
 /** Seconds to wait (rolling debounce) for more photos before showing buttons */
