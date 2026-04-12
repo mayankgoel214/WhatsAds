@@ -613,7 +613,16 @@ Integrate this into your creative concept for the chosen style. IMPORTANT RULES:
 - If the user mentions a SETTING (e.g., "garden", "kitchen", "beach"), design the scene IN that setting while maintaining the chosen style's photography approach.
 - If the user mentions a MOOD or EFFECT (e.g., "dramatic", "festive", "luxury"), amplify that feeling through lighting, composition, and props.
 - The user's instruction should ENHANCE the chosen style, not override it. A "red background" in lifestyle style = warm red-toned kitchen/table setting. In gradient style = deep red gradient with dramatic lighting. In studio = rich red backdrop with professional lighting.
-- NEVER interpret color instructions as flat solid backgrounds — always create depth, texture, and dimension.\n\n`;
+- NEVER interpret color instructions as flat solid backgrounds — always create depth, texture, and dimension.
+- INDIAN FESTIVAL INTELLIGENCE: Different Indian festivals have VERY DIFFERENT visual identities. Do NOT mix them:
+  * DIWALI: Oil lamps (diyas), string lights, firecrackers, rangoli, sparklers, indoor glittering settings
+  * CHHATH PUJA: River/ghat setting at sunset or sunrise, bamboo soop (winnowing basket/basket tray), sugarcane stalks, thekua sweets, fruits (coconut, banana, oranges), brass vessels with offerings, banana leaves. NO diyas, NO string lights. The setting is ALWAYS at a riverbank/water body with golden sunset light.
+  * HOLI: Colored powders (gulal), water colors, pichkari (water guns), white clothes splashed with color, playful energy
+  * NAVRATRI/DURGA PUJA: Red and gold colors, dandiya sticks, traditional garba dress, elaborate pandal decorations
+  * MAKAR SANKRANTI: Kites, sesame-jaggery sweets (tilgul), open sky settings
+  * EID: Crescent moon, dates, biryani, traditional Islamic patterns, green and white colors
+  * CHRISTMAS: Decorated tree, red-green-gold colors, stars, gifts, winter elements
+  If the user mentions a specific festival, use ONLY that festival's visual elements. Do NOT default to Diwali elements (diyas, lights) for non-Diwali festivals.\n\n`;
   }
 
   prompt += `Return this exact JSON structure:

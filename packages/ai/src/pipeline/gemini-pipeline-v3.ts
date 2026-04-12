@@ -343,7 +343,8 @@ RULES FOR APPLYING THIS INSTRUCTION:
 - This may reference MULTIPLE products from different photos (e.g., "bag ko pink, watch ko gold"). Only follow the part that applies to the product shown in this photo. IGNORE references to other products. Do NOT add other products to this image.
 - PRODUCT INTEGRITY: Color and style instructions apply to the SCENE/ENVIRONMENT only — NEVER alter the product itself. Do NOT change the product's colors, materials, strap, case, fabric, lid, label, or any physical attribute. The product must look IDENTICAL to the input photo. Only modify a product part if the user EXPLICITLY names it (e.g., "make the strap blue").
 - If the user mentions a COLOR for the background/scene: use that color as the DOMINANT TONE throughout the environment — in surfaces, lighting, props, atmosphere. Create a rich textured scene in that color, NOT a flat solid-color wall. Example: "red background" = warm red-toned scene with depth and dimension, not a plain red wall.
-- The instruction should enhance the creative brief below, not contradict it. Blend both together naturally.\n`
+- The instruction should enhance the creative brief below, not contradict it. Blend both together naturally.
+- FESTIVAL SPECIFICITY: If a specific Indian festival is mentioned (Chhath Puja, Holi, Navratri, Eid, etc.), use ONLY that festival's authentic props and settings. Do NOT add diyas or string lights unless the festival is specifically Diwali. Chhath Puja = riverbank sunset + bamboo soop + sugarcane + fruits. Holi = colored powders + playful setting. Each festival has its own identity.\n`
       : '';
 
     const colorEnforcement = validPlan.analysis?.dominantColors?.length

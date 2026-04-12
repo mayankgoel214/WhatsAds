@@ -148,65 +148,70 @@ async function addChromaticAberration(imageBuffer: Buffer): Promise<Buffer> {
 
 /**
  * Composite the Clickkar logo watermark onto the image.
- * Legal requirement for all AI-generated content in India.
- * Small semi-transparent badge at the bottom-right corner.
  *
- * Uses md (160x44) for images >= 800px wide, sm (120x32) otherwise.
- * The SVG paths are inlined directly so sharp's SVG renderer has no
- * external file dependencies at rasterization time.
+ * Approach inspired by Adobe Firefly + DALL-E:
+ * 1. Subtle gradient scrim across bottom of image (ensures legibility on any background)
+ * 2. Logo badge at ~12% of image width, bottom-right with proportional margin
+ * 3. Semi-transparent dark pill with the actual Clickkar horizontal logo (CK icon + amber divider + wordmark)
+ *
+ * Badge scales proportionally with image size. No fixed pixel sizes.
  */
 export async function addAILabel(imageBuffer: Buffer): Promise<Buffer> {
   const meta = await sharp(imageBuffer).metadata();
   const w = meta.width ?? 1024;
   const h = meta.height ?? 1024;
 
-  // Pick watermark size based on image width
-  const useMd = w >= 800;
+  // --- Step 1: Bottom gradient scrim for consistent legibility ---
+  // Subtle darkening across the full width at the bottom — ensures the white logo
+  // reads cleanly on both white studio backgrounds and dark cinematic ones.
+  const scrimHeight = Math.max(40, Math.round(h * 0.06));
+  const scrimSvg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${scrimHeight}">
+    <defs>
+      <linearGradient id="scrim" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="black" stop-opacity="0"/>
+        <stop offset="1" stop-color="black" stop-opacity="0.18"/>
+      </linearGradient>
+    </defs>
+    <rect width="${w}" height="${scrimHeight}" fill="url(#scrim)"/>
+  </svg>`);
+  const scrimPng = await sharp(scrimSvg).png().toBuffer();
 
-  let svgString: string;
+  // --- Step 2: Logo badge ---
+  // Target: ~12% of image width, clamped between 100-200px
+  const badgeW = Math.max(100, Math.min(200, Math.round(w * 0.12)));
+  // Maintain the 200:52 aspect ratio from the canonical horizontal logo
+  const badgeH = Math.round(badgeW * (52 / 200));
+  // Padding inside the pill around the logo content
+  const padX = Math.round(badgeW * 0.04);
+  const padY = Math.round(badgeH * 0.12);
+  const pillW = badgeW + padX * 2;
+  const pillH = badgeH + padY * 2;
 
-  if (useMd) {
-    // md: 160x44 logo + 6px padding on all sides → wrapper 172x56
-    svgString = `<svg xmlns="http://www.w3.org/2000/svg" width="172" height="56">
-  <rect width="172" height="56" fill="rgba(0,0,0,0.30)" rx="5"/>
-  <g transform="translate(6,6)">
-    <g opacity="0.8">
-      <path d="M8 36 A16 16 0 0 1 8 14" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"/>
-      <path d="M8 14 L8 24 L18 14" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M8 24 L18 36" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"/>
-      <line x1="24" y1="10" x2="24" y2="38" stroke="#EF9F27" stroke-width="1" opacity="0.8"/>
-      <text x="30" y="28" font-family="Arial,Helvetica,sans-serif" font-weight="600" font-size="15" fill="white" letter-spacing="-0.2">clickkar</text>
-    </g>
-  </g>
-</svg>`;
-  } else {
-    // sm: 120x32 logo + 6px padding on all sides → wrapper 132x44
-    svgString = `<svg xmlns="http://www.w3.org/2000/svg" width="132" height="44">
-  <rect width="132" height="44" fill="rgba(0,0,0,0.30)" rx="5"/>
-  <g transform="translate(6,6)">
-    <g opacity="0.75">
-      <path d="M6 26 A12 12 0 0 1 6 10" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round"/>
-      <path d="M6 10 L6 18 L14 10" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M6 18 L14 26" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round"/>
-      <line x1="18" y1="7" x2="18" y2="28" stroke="#EF9F27" stroke-width="0.8" opacity="0.8"/>
-      <text x="23" y="21" font-family="Arial,Helvetica,sans-serif" font-weight="600" font-size="11" fill="white" letter-spacing="-0.1">clickkar</text>
-    </g>
-  </g>
-</svg>`;
-  }
+  // The logo uses viewBox="0 0 200 52" — sharp/librsvg will scale it to the target width/height
+  const badgeSvg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${pillW}" height="${pillH}" viewBox="0 0 ${pillW} ${pillH}">
+    <rect width="${pillW}" height="${pillH}" fill="rgba(0,0,0,0.32)" rx="${Math.round(pillH * 0.15)}"/>
+    <svg x="${padX}" y="${padY}" width="${badgeW}" height="${badgeH}" viewBox="0 0 200 52">
+      <g opacity="0.9">
+        <path d="M10 42 A20 20 0 0 1 10 18" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+        <path d="M10 18 L10 30 L22 18" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M10 30 L22 42" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+        <line x1="28" y1="12" x2="28" y2="46" stroke="#EF9F27" stroke-width="1.2" opacity="0.85"/>
+        <text x="36" y="34" font-family="Arial,Helvetica,sans-serif" font-weight="600" font-size="18" fill="white" letter-spacing="-0.3">clickkar</text>
+      </g>
+    </svg>
+  </svg>`);
+  const badgePng = await sharp(badgeSvg).png().toBuffer();
 
-  const overlayW = useMd ? 172 : 132;
-  const overlayH = useMd ? 56 : 44;
-
-  const overlay = await sharp(Buffer.from(svgString)).png().toBuffer();
+  // --- Step 3: Composite both layers ---
+  const margin = Math.max(10, Math.round(w * 0.012));
 
   return sharp(imageBuffer)
-    .composite([{
-      input: overlay,
-      left: w - overlayW - 8,
-      top: h - overlayH - 8,
-      blend: 'over',
-    }])
+    .composite([
+      // Scrim first (behind the badge)
+      { input: scrimPng, left: 0, top: h - scrimHeight, blend: 'over' },
+      // Logo badge on top
+      { input: badgePng, left: w - pillW - margin, top: h - pillH - margin, blend: 'over' },
+    ])
     .jpeg({ quality: 95, mozjpeg: true })
     .toBuffer();
 }

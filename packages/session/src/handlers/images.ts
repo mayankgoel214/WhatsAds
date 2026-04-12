@@ -120,12 +120,27 @@ export async function handleAwaitingPhoto(
     const currentCount = session.imageStorageUrls.length;
 
     if (currentCount >= MAX_IMAGES_PER_ORDER) {
-      await wa.sendText(
-        phoneNumber,
-        lang === 'hi'
-          ? `Maximum ${MAX_IMAGES_PER_ORDER} photos ho gayi hain. Kripya "done" bolein ya button dabayein.`
-          : `Maximum ${MAX_IMAGES_PER_ORDER} photos reached. Please say "done" or tap a button to proceed.`,
-      );
+      // Only send the "max reached" message once — use earlyPhotoMediaId as a dedup guard.
+      // If it's still null, we're the first handler to notice max — set it atomically and notify.
+      // If it's already set, another handler already notified — silently return.
+      if (!session.earlyPhotoMediaId) {
+        try {
+          const updated = await prisma.session.updateMany({
+            where: { phoneNumber, earlyPhotoMediaId: null },
+            data: { earlyPhotoMediaId: 'awaiting_action' },
+          });
+          if (updated.count > 0) {
+            await wa.sendText(
+              phoneNumber,
+              lang === 'hi'
+                ? `Maximum ${MAX_IMAGES_PER_ORDER} photos ho gayi hain. Kripya "done" bolein ya button dabayein.`
+                : `Maximum ${MAX_IMAGES_PER_ORDER} photos reached. Please say "done" or tap a button to proceed.`,
+            );
+          }
+        } catch {
+          // Another handler beat us — that's fine
+        }
+      }
       return;
     }
 
