@@ -13,7 +13,33 @@ import { uploadFile, Buckets } from '@whatsads/storage';
 import { WhatsAppClient } from '@whatsads/whatsapp';
 import { sendProcessedImages } from '@whatsads/session';
 import { ImageProcessingJobDataSchema } from '@whatsads/queue';
-import { getConfig } from '../config.js';
+import { getConfig, type WorkerConfig } from '../config.js';
+
+async function sendProgressUpdate(
+  phoneNumber: string,
+  stage: number,
+  lang: 'hi' | 'en',
+  config: WorkerConfig,
+): Promise<void> {
+  try {
+    const wa = new WhatsAppClient({
+      accessToken: config.WHATSAPP_ACCESS_TOKEN,
+      phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
+    });
+
+    const messages: Record<number, Record<string, string>> = {
+      2: {
+        hi: 'Almost there! 🎨',
+        en: 'Almost there! 🎨',
+      },
+    };
+
+    const msg = messages[stage]?.[lang] ?? messages[stage]?.['en'] ?? '';
+    if (msg) await wa.sendText(phoneNumber, msg);
+  } catch (err) {
+    console.warn(JSON.stringify({ event: 'progress_update_failed', stage, error: String(err) }));
+  }
+}
 
 export async function processImageJob(job: Job): Promise<void> {
   const config = getConfig();
@@ -25,6 +51,21 @@ export async function processImageJob(job: Job): Promise<void> {
   };
 
   log('=== STARTING IMAGE PROCESSING ===', { style: data.style, imageUrl: data.inputImageUrl.slice(0, 80) });
+
+  // Fetch the imageJob record to get styleIndex (used for progress update gating)
+  const imageJobRecord = await prisma.imageJob.findUnique({
+    where: { id: data.imageJobId },
+    select: { styleIndex: true },
+  }).catch(() => null);
+  const styleIndex = imageJobRecord?.styleIndex ?? 0;
+  const isFirstJob = styleIndex === 0;
+
+  // Fetch the user's language early — needed for progress messages
+  const userForLang = await prisma.user.findUnique({
+    where: { phoneNumber: data.phoneNumber },
+    select: { language: true },
+  }).catch(() => null);
+  const lang = (userForLang?.language as 'hi' | 'en') || 'hi';
 
   // Update job status
   await prisma.imageJob.update({
@@ -38,16 +79,103 @@ export async function processImageJob(job: Job): Promise<void> {
     }));
   }); // Job record might not exist for edits
 
+  // ── Multi-angle product analysis ────────────────────────────────────────────
+  // Run ONCE per order (on the first job). Subsequent jobs for the same order
+  // reuse the profile stored in Order.productProfile.
+  let productProfile: any = null;
+
+  {
+    // Stagger non-first jobs so styleIndex=0 has time to compute and store the
+    // profile before the other jobs check for it. If job 0 hasn't finished by
+    // the time they check, they each compute their own — that's fine.
+    if (styleIndex > 0) {
+      await new Promise(r => setTimeout(r, 3000));
+    }
+
+    const orderForProfile = await prisma.order.findUnique({
+      where: { id: data.orderId },
+      select: { productProfile: true, inputImageUrls: true },
+    }).catch(() => null);
+
+    if (orderForProfile?.productProfile) {
+      // Profile already computed by a previous job for this order — reuse it
+      productProfile = orderForProfile.productProfile;
+      console.info(JSON.stringify({ event: 'product_profile_reused', orderId: data.orderId }));
+    } else if (orderForProfile?.inputImageUrls && orderForProfile.inputImageUrls.length > 0) {
+      // First job to run — compute the profile from all input images
+      try {
+        const { analyzeMultiAngleProduct, downloadBuffer } = await import('@whatsads/ai');
+
+        const imageUrls = (orderForProfile.inputImageUrls as string[]).slice(0, 5);
+        const buffers = await Promise.all(imageUrls.map(url => downloadBuffer(url)));
+
+        const profile = await analyzeMultiAngleProduct(
+          buffers,
+          data.voiceInstructions,
+          data.style ? [data.style] : undefined,
+        );
+
+        // Persist in Order for subsequent jobs in the same order to reuse
+        const primaryUrl = imageUrls[profile.primaryImageIndex] ?? imageUrls[0];
+        await prisma.order.update({
+          where: { id: data.orderId },
+          data: {
+            productProfile: profile as any,
+            primaryInputImageUrl: primaryUrl,
+          },
+        });
+
+        productProfile = profile;
+        console.info(JSON.stringify({
+          event: 'product_profile_computed',
+          orderId: data.orderId,
+          imageCount: imageUrls.length,
+          primaryIndex: profile.primaryImageIndex,
+          productName: profile.productName,
+          hasBranding: profile.hasBranding,
+          brandingConfidence: profile.brandingConfidence,
+        }));
+      } catch (err) {
+        console.warn(JSON.stringify({
+          event: 'product_profile_failed',
+          orderId: data.orderId,
+          error: err instanceof Error ? err.message : String(err),
+        }));
+        // Non-fatal — pipeline falls back to single-image analysis inside V3
+      }
+    }
+  }
+
   try {
     // Use never-fail pipeline — always returns a result
     log('Using Never-Fail pipeline');
+
+    // Progress update — sent after 30s delay, only for the first job
+    let stage2Sent = false;
+    let stage2Timer: ReturnType<typeof setTimeout> | undefined;
+    if (isFirstJob) {
+      stage2Timer = setTimeout(async () => {
+        if (!stage2Sent) {
+          stage2Sent = true;
+          await sendProgressUpdate(data.phoneNumber, 2, lang, config);
+        }
+      }, 30_000);
+    }
 
     const result = await processImageNeverFail({
       imageUrl: data.inputImageUrl,
       style: data.style,
       productCategory: data.productCategory,
       voiceInstructions: data.voiceInstructions,
+      productProfile, // Pre-computed profile — undefined if analysis failed or single-image
     });
+
+    // Cancel the stage 2 timer if pipeline finished before 15s
+    if (stage2Timer !== undefined) {
+      clearTimeout(stage2Timer);
+      stage2Sent = true; // Prevent the timer callback from firing if it already expired
+    }
+
     log(`Pipeline complete`, {
       tier: result.tier,
       tierReason: result.tierReason,
@@ -225,9 +353,11 @@ export async function processImageJob(job: Job): Promise<void> {
           // Order was already completed (e.g. by another worker, or by a previous delivery run).
           // For style-change edits the session will be in EDIT_PROCESSING — we still need to
           // send the new output and feedback buttons so the user sees the updated result.
-          const currentSession = user
-            ? await prisma.session.findFirst({ where: { userId: user.id } })
-            : null;
+          if (!user) {
+            log('User not found for delivery — cannot send images');
+            return;
+          }
+          const currentSession = await prisma.session.findFirst({ where: { userId: user.id } });
 
           const isStyleChangeEdit = currentSession?.state === 'EDIT_PROCESSING';
           if (isStyleChangeEdit) {
@@ -276,12 +406,13 @@ export async function processImageJob(job: Job): Promise<void> {
           styleLabels.length > 0 ? styleLabels : undefined,
         );
 
-        // Transition session to DELIVERED from PROCESSING, EDIT_PROCESSING, or IDLE
-        // (IDLE is included because the user may have escaped PROCESSING via escape intent
-        // while the worker was still running — we still need to show feedback buttons)
+        // Transition session to DELIVERED from PROCESSING, EDIT_PROCESSING, IDLE, or
+        // AWAITING_REVISION_PAYMENT. The last case covers a race where the user paid for
+        // a revision, the session timed out and moved forward before the job finished, and
+        // the worker arrives late — user still needs to see the output.
         if (user) {
           const sessionUpdate = await prisma.session.updateMany({
-            where: { userId: user.id, state: { in: ['PROCESSING', 'EDIT_PROCESSING', 'IDLE'] } },
+            where: { userId: user.id, state: { in: ['PROCESSING', 'EDIT_PROCESSING', 'IDLE', 'AWAITING_REVISION_PAYMENT'] } },
             data: { state: 'DELIVERED', stateEnteredAt: new Date() },
           });
           if (sessionUpdate.count > 0) {

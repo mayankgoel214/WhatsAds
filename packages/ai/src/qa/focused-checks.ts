@@ -205,11 +205,12 @@ Compare the product in both images:
 1. Count ALL visible components/pieces in Image 1 (e.g., necklace + 2 earrings = 3 pieces, bottle + cap = 2 pieces, single item = 1 piece)
 2. Count ALL visible components/pieces in Image 2
 3. Check if EACH component in Image 1 has a matching component in Image 2 with similar shape and proportions
+4. Check if the product in Image 2 has the SAME overall shape, size ratio, and form factor as in Image 1. A flat pouch that becomes a structured bag, a wristlet that becomes a shoulder bag, a small coin purse that becomes a large clutch, or any other change in the fundamental product category/form counts as ALTERED — even if the color and branding match.
 
 Answer in JSON:
-{"allComponentsPresent": boolean, "missingComponents": "description of what's missing or distorted, or 'none'"}
+{"allComponentsPresent": boolean, "missingComponents": "description of what's missing, distorted, or form-factor-changed, or 'none'"}
 
-Be strict: if an earring's shape changed from elongated drop to compact stud, that counts as a missing/wrong component.` }
+Be strict: if an earring's shape changed from elongated drop to compact stud, that counts as a missing/wrong component. If a small flat accessory was reshaped into a larger or different product type, that counts as a form factor change and must be reported.` }
           ],
         }],
       }),

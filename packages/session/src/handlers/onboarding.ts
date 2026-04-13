@@ -450,6 +450,7 @@ export async function sendStyleList(
 
   // All individual style rows (excluding already-picked styles)
   const individualRows = [
+    { id: ListIds.STYLE_CLICKKAR_SPECIAL, title: styleDisplayName(ListIds.STYLE_CLICKKAR_SPECIAL, lang), description: makeDesc(ListIds.STYLE_CLICKKAR_SPECIAL, 'AI picks the best creative direction') },
     { id: ListIds.STYLE_CLEAN_WHITE, title: styleDisplayName(ListIds.STYLE_CLEAN_WHITE, lang), description: makeDesc(ListIds.STYLE_CLEAN_WHITE, 'Pure white background') },
     { id: ListIds.STYLE_LIFESTYLE, title: styleDisplayName(ListIds.STYLE_LIFESTYLE, lang), description: makeDesc(ListIds.STYLE_LIFESTYLE, 'Real-life setting') },
     { id: ListIds.STYLE_GRADIENT, title: styleDisplayName(ListIds.STYLE_GRADIENT, lang), description: makeDesc(ListIds.STYLE_GRADIENT, 'Cinematic dark & dramatic') },

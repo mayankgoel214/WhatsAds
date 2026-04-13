@@ -31,6 +31,7 @@ import {
   msgProcessingStuck,
   msgGenericError,
 } from './messages.js';
+import { onRevisionPaymentConfirmed } from './handlers/payment.js';
 
 // ---------------------------------------------------------------------------
 // Main entry point
@@ -92,17 +93,50 @@ export async function handleIncomingMessage(
         await handleIdle(session, user, message, wa);
         break;
 
-      case 'SETUP_LANGUAGE':
+      case 'SETUP_LANGUAGE': {
+        if (isEscapeIntent(message)) {
+          logger.info('Escape intent in SETUP_LANGUAGE — resetting to IDLE', { phoneNumber });
+          await transitionTo(phoneNumber, 'IDLE', {
+            currentOrderId: null, styleSelection: null, styleSelections: [],
+            stylePickStep: 0, earlyPhotoMediaId: null,
+          });
+          const freshSession = await getSession(phoneNumber);
+          if (freshSession) await handleIdle(freshSession, user, message, wa);
+          break;
+        }
         await handleSetupLanguage(session, user, message, wa);
         break;
+      }
 
-      case 'SETUP_NAME':
+      case 'SETUP_NAME': {
+        if (isEscapeIntent(message)) {
+          logger.info('Escape intent in SETUP_NAME — resetting to IDLE', { phoneNumber });
+          await transitionTo(phoneNumber, 'IDLE', {
+            currentOrderId: null, styleSelection: null, styleSelections: [],
+            stylePickStep: 0, earlyPhotoMediaId: null,
+          });
+          const freshSession = await getSession(phoneNumber);
+          if (freshSession) await handleIdle(freshSession, user, message, wa);
+          break;
+        }
         await handleSetupName(session, user, message, wa);
         break;
+      }
 
-      case 'SETUP_CATEGORY':
+      case 'SETUP_CATEGORY': {
+        if (isEscapeIntent(message)) {
+          logger.info('Escape intent in SETUP_CATEGORY — resetting to IDLE', { phoneNumber });
+          await transitionTo(phoneNumber, 'IDLE', {
+            currentOrderId: null, styleSelection: null, styleSelections: [],
+            stylePickStep: 0, earlyPhotoMediaId: null,
+          });
+          const freshSession = await getSession(phoneNumber);
+          if (freshSession) await handleIdle(freshSession, user, message, wa);
+          break;
+        }
         await handleSetupCategory(session, user, message, wa);
         break;
+      }
 
       case 'SETUP_STYLE': {
         // Escape hatch — user wants to start over from scratch
@@ -127,9 +161,27 @@ export async function handleIncomingMessage(
         break;
       }
 
-      case 'AWAITING_PHOTO':
+      case 'AWAITING_PHOTO': {
+        const awaitingPhotoMinutes = session.stateEnteredAt
+          ? (Date.now() - new Date(session.stateEnteredAt).getTime()) / 60_000
+          : 0;
+
+        if (awaitingPhotoMinutes > 60) {
+          // 1 hour timeout — user abandoned photo upload
+          logger.info('AWAITING_PHOTO timeout — resetting to IDLE', { phoneNumber });
+          await transitionTo(phoneNumber, 'IDLE', {
+            currentOrderId: null, styleSelection: null, styleSelections: [],
+            stylePickStep: 0, imageMediaIds: [], imageStorageUrls: [],
+            earlyPhotoMediaId: null, voiceInstructions: null,
+          });
+          const freshSession = await getSession(phoneNumber);
+          if (freshSession) await handleIdle(freshSession, user, message, wa);
+          break;
+        }
+
         await handleAwaitingPhoto(session, user, message, wa);
         break;
+      }
 
       case 'AWAITING_PAYMENT': {
         // Escape hatch — let users abandon payment and restart
@@ -231,6 +283,53 @@ export async function handleIncomingMessage(
           await wa.sendText(phoneNumber, msgProcessingStuck(lang));
         } else {
           await handleEditProcessing(session, user, message, wa);
+        }
+        break;
+      }
+
+      case 'AWAITING_REVISION_PAYMENT': {
+        // Escape hatch — user gives up on revision payment
+        if (isEscapeIntent(message)) {
+          logger.info('Escape intent in AWAITING_REVISION_PAYMENT — resetting to IDLE', { phoneNumber });
+          await transitionTo(phoneNumber, 'IDLE', {
+            currentOrderId: null,
+            styleSelection: null,
+            styleSelections: [],
+            stylePickStep: 0,
+            pendingEditStyle: null,
+            pendingEditInstructions: null,
+            earlyPhotoMediaId: null,
+          });
+          const freshSession = await getSession(phoneNumber);
+          if (freshSession) await handleIdle(freshSession, user, message, wa);
+          break;
+        }
+
+        // Auto-recovery: 30 minute timeout — user abandoned revision payment, reset to DELIVERED
+        const revisionPaymentStuckMinutes = session.stateEnteredAt
+          ? (Date.now() - new Date(session.stateEnteredAt).getTime()) / 60_000
+          : 0;
+
+        if (revisionPaymentStuckMinutes > 30) {
+          logger.info('AWAITING_REVISION_PAYMENT timeout — resetting to DELIVERED', { phoneNumber });
+          await transitionTo(phoneNumber, 'DELIVERED', {
+            pendingEditStyle: null,
+            pendingEditInstructions: null,
+          });
+          const freshSession = await getSession(phoneNumber);
+          if (freshSession) {
+            await handleDelivered(freshSession, user, message, wa);
+          }
+          break;
+        }
+
+        // Remind user we are waiting for payment
+        {
+          const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
+          const waitMsg = lang === 'hi'
+            ? 'Payment ka intezaar hai. Pay karne ke baad hum aapka edit process karenge.'
+            : "Waiting for payment. We'll process your edit once payment is confirmed.";
+          await wa.sendText(phoneNumber, waitMsg);
         }
         break;
       }

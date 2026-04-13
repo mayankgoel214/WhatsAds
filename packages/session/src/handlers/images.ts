@@ -50,12 +50,20 @@ export async function handleAwaitingPhoto(
     earlyPhotoMediaId: session.earlyPhotoMediaId,
   }));
 
-  // Self-healing: if earlyPhotoMediaId is stuck in an invalid state for AWAITING_PHOTO, reset it
-  if (session.earlyPhotoMediaId === 'order_creating') {
+  // Self-healing: if earlyPhotoMediaId is stuck in an invalid state for AWAITING_PHOTO, reset it.
+  // Covers 'order_creating' and any 'redo_style_index:N' values that may be left over
+  // from a prior style-change edit that was interrupted before completing.
+  const isStaleEarlyPhotoFlag =
+    session.earlyPhotoMediaId === 'order_creating' ||
+    (typeof session.earlyPhotoMediaId === 'string' &&
+      session.earlyPhotoMediaId.startsWith('redo_style_index:'));
+
+  if (isStaleEarlyPhotoFlag) {
     console.warn(JSON.stringify({
-      event: 'self_heal_stale_order_creating',
+      event: 'self_heal_stale_early_photo_flag',
       phoneNumber,
-      state: session.state
+      flagValue: session.earlyPhotoMediaId,
+      state: session.state,
     }));
     await prisma.session.update({
       where: { phoneNumber },
@@ -279,8 +287,13 @@ export async function handleAwaitingPhoto(
         return;
       } catch (err) {
         logger.error('Voice transcription failed', { error: String(err) });
-        const freshSession = await prisma.session.findUnique({ where: { phoneNumber } });
-        if (freshSession) await advanceToPayment(freshSession, user, wa, lang);
+        await wa.sendText(
+          phoneNumber,
+          lang === 'hi'
+            ? 'Voice note samajh nahi aaya. Text mein instructions bhejein ya "done" bolein.'
+            : "Couldn't understand the voice note. Please send text instructions or say \"done\".",
+        );
+        // Do NOT advance — let user retry with text or say "done" to skip instructions
         return;
       }
     }

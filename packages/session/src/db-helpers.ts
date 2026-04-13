@@ -35,6 +35,8 @@ export async function transitionTo(
     imageMediaIds: string[];
     imageStorageUrls: string[];
     earlyPhotoMediaId: string | null;
+    pendingEditStyle: string | null;
+    pendingEditInstructions: string | null;
     lastUserMessageAt: Date;
     stateEnteredAt: Date;
     cswExpiresAt: Date;

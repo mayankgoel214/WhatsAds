@@ -9,6 +9,7 @@ export const CONVERSATION_STATES = [
   'PROCESSING',
   'DELIVERED',
   'EDIT_PROCESSING',
+  'AWAITING_REVISION_PAYMENT',
 ] as const;
 
 export type ConversationState = typeof CONVERSATION_STATES[number];
@@ -140,6 +141,7 @@ export const ListIds = {
   ACTION_PACK: 'action_pack',
   CUSTOM_PACK: 'custom_pack',
   // Individual styles (used in custom 3-step picker)
+  STYLE_CLICKKAR_SPECIAL: 'style_clickkar_special',
   STYLE_CLEAN_WHITE: 'style_clean_white',
   STYLE_LIFESTYLE: 'style_lifestyle',
   STYLE_GRADIENT: 'style_gradient',

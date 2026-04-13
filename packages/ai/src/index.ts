@@ -49,6 +49,7 @@ export {
 export {
   generateStoryFormat,
   addAdOverlay,
+  downloadBuffer,
 } from './pipeline/fallback.js';
 
 // ---------------------------------------------------------------------------

@@ -17,7 +17,6 @@ import { transitionTo } from '../db-helpers.js';
 import {
   msgPaymentPending,
   msgPaymentConfirmed,
-  msgProcessingStarted,
   msgGenericError,
 } from '../messages.js';
 import { PAYMENT_CHECK_DELAY_MS, ButtonIds } from '../types.js';
@@ -115,15 +114,32 @@ export async function onPaymentConfirmed(
   try {
     // Status already set to payment_confirmed by the idempotency guard above.
     // Transition session state to PROCESSING.
-    await prisma.session.update({
-      where: { phoneNumber },
-      data: { state: 'PROCESSING', stateEnteredAt: new Date() },
+    await transitionTo(phoneNumber, 'PROCESSING', {
+      currentOrderId: order.id,
     });
 
     await wa.sendText(phoneNumber, msgPaymentConfirmed(lang));
-    await wa.sendText(phoneNumber, msgProcessingStarted(lang));
 
-    await enqueueImageJobs(orderId, phoneNumber, order);
+    try {
+      await enqueueImageJobs(orderId, phoneNumber, order);
+    } catch (enqueueErr) {
+      console.error(JSON.stringify({
+        event: 'enqueue_after_payment_failed',
+        orderId: order.id,
+        error: enqueueErr instanceof Error ? enqueueErr.message : String(enqueueErr),
+      }));
+
+      // Reset session so user can see their order history and retry
+      await transitionTo(phoneNumber, 'DELIVERED', {
+        currentOrderId: order.id,
+      });
+
+      await wa.sendText(phoneNumber, lang === 'hi'
+        ? 'Kuch problem aayi. Kripya "hi" bhejein aur dobara try karein. Aapka payment safe hai.'
+        : 'Something went wrong. Please send "hi" and try again. Your payment is safe.');
+
+      return;
+    }
 
     // Schedule a proactive delay notification at 90 seconds.
     // If the session is still in PROCESSING when it fires, sends msgProcessingDelay.
@@ -151,56 +167,6 @@ export async function onPaymentConfirmed(
     });
     await wa.sendText(phoneNumber, msgGenericError(lang));
   }
-}
-
-// ---------------------------------------------------------------------------
-// Route a voice instruction to the correct style (or all styles if global)
-// ---------------------------------------------------------------------------
-
-function routeInstructionToStyle(
-  instruction: string,
-  styleId: string,
-): string | undefined {
-  if (!instruction) return undefined;
-
-  const lowerInstruction = instruction.toLowerCase();
-
-  // Style name mappings for detection
-  const styleKeywords: Record<string, string[]> = {
-    'style_clean_white': ['clean white', 'white background', 'safed', 'white'],
-    'style_studio': ['studio', 'colored studio', 'color studio', 'colour studio'],
-    'style_gradient': ['gradient', 'dark luxury', 'dark'],
-    'style_lifestyle': ['lifestyle', 'zindagi'],
-    'style_outdoor': ['outdoor', 'bahar', 'outside', 'nature'],
-    'style_festive': ['festive', 'festival', 'diwali', 'tyohar'],
-    'style_with_model': ['model', 'person', 'someone holding'],
-    'style_clickkar_special': ['special', 'clickkar special'],
-  };
-
-  // Check if the instruction mentions ANY specific style
-  let mentionsSpecificStyle = false;
-  let targetStyleId: string | null = null;
-
-  for (const [sid, keywords] of Object.entries(styleKeywords)) {
-    for (const kw of keywords) {
-      if (lowerInstruction.includes(kw)) {
-        mentionsSpecificStyle = true;
-        targetStyleId = sid;
-        break;
-      }
-    }
-    if (mentionsSpecificStyle) break;
-  }
-
-  // If instruction mentions a specific style:
-  // - Return the instruction only for that style
-  // - Return undefined for other styles
-  if (mentionsSpecificStyle && targetStyleId) {
-    return styleId === targetStyleId ? instruction : undefined;
-  }
-
-  // No specific style mentioned — apply to all (global instruction)
-  return instruction;
 }
 
 // ---------------------------------------------------------------------------
@@ -248,15 +214,13 @@ export async function enqueueImageJobs(
       },
     });
 
-    const styleInstruction = routeInstructionToStyle(voiceInstructions ?? '', styleId);
-
     await imageQueue.add('process_image', {
       orderId,
       imageJobId: imageJob.id,
       phoneNumber,
       inputImageUrl: primaryInputImageUrl,
       style: styleId,
-      voiceInstructions: styleInstruction ?? undefined,
+      voiceInstructions: order.voiceInstructions ?? undefined,
       productCategory: order.productCategory ?? undefined,
       pipeline: 'primary',
     });
@@ -321,12 +285,6 @@ export async function sendPaymentLink(
   // DEV MODE: skip payment and auto-confirm
   if (process.env.PAYMENT_BYPASS === 'true') {
     logger.info('DEV MODE: Skipping payment, auto-confirming order', { phoneNumber, orderId: order.id });
-    await wa.sendText(
-      phoneNumber,
-      lang === 'hi'
-        ? 'Dev mode: Payment skip ho gaya. Processing shuru ho rahi hai...'
-        : 'Dev mode: Payment skipped. Starting processing...',
-    );
     await onPaymentConfirmed(order.id, 'dev_payment_' + Date.now(), wa);
     return;
   }
@@ -393,5 +351,107 @@ async function schedulePaymentCheck(
       orderId,
       error: err instanceof Error ? err.message : String(err),
     });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Called when a revision payment (Rs 29) is confirmed via webhook or polling
+// ---------------------------------------------------------------------------
+
+export async function onRevisionPaymentConfirmed(
+  orderId: string,
+  wa: WhatsAppClient,
+): Promise<void> {
+  const order = await prisma.order.findUnique({ where: { id: orderId } });
+  if (!order) {
+    logger.error('onRevisionPaymentConfirmed: order not found', { orderId });
+    return;
+  }
+
+  const phoneNumber = order.phoneNumber;
+
+  const session = await prisma.session.findUnique({ where: { phoneNumber } });
+  // ALWAYS process the edit — user paid Rs 29. Do not gate on session state.
+  if (session && session.state !== 'AWAITING_REVISION_PAYMENT') {
+    logger.warn('onRevisionPaymentConfirmed: session state mismatch — processing edit anyway', {
+      phoneNumber,
+      state: session.state,
+    });
+  }
+
+  const user = await prisma.user.findUnique({ where: { phoneNumber } });
+  if (!user) {
+    logger.error('onRevisionPaymentConfirmed: user not found', { phoneNumber });
+    return;
+  }
+
+  const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
+
+  try {
+    // Increment revision count
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { revisionsUsed: { increment: 1 }, status: 'processing', processingStartedAt: new Date(), processingCompletedAt: null },
+    });
+
+    // Use pending edit info stored in session at time of payment request
+    const editStyle = (session as any).pendingEditStyle ?? order.style ?? 'style_clean_white';
+    const editInstructions = (session as any).pendingEditInstructions ?? null;
+
+    const inputImageUrls = order.inputImageUrls as string[];
+    const cutoutUrls = order.cutoutUrls as string[];
+    const lastIdx = Math.max(0, inputImageUrls.length - 1);
+    const editImageUrl = cutoutUrls[lastIdx] || inputImageUrls[lastIdx] || inputImageUrls[0] || '';
+
+    const imageJob = await prisma.imageJob.create({
+      data: {
+        orderId,
+        inputImageUrl: editImageUrl,
+        style: editStyle,
+        pipeline: cutoutUrls[lastIdx] ? 'fallback' : 'primary',
+        status: 'queued',
+      },
+    });
+
+    const imageQueue = getImageQueue();
+    await imageQueue.add('process_image', {
+      orderId,
+      imageJobId: imageJob.id,
+      phoneNumber,
+      inputImageUrl: editImageUrl,
+      style: editStyle,
+      voiceInstructions: editInstructions ?? undefined,
+      productCategory: order.productCategory ?? undefined,
+      pipeline: cutoutUrls[lastIdx] ? 'fallback' : 'primary',
+    });
+
+    // Transition to EDIT_PROCESSING and clear pending edit fields
+    await transitionTo(phoneNumber, 'EDIT_PROCESSING', {
+      pendingEditStyle: null,
+      pendingEditInstructions: null,
+    });
+
+    await wa.sendText(
+      phoneNumber,
+      lang === 'hi'
+        ? 'Payment mil gaya! Aapka edit process ho raha hai...'
+        : 'Payment received! Processing your edit...',
+    );
+
+    console.info(JSON.stringify({
+      event: 'revision_payment_confirmed',
+      orderId,
+      phoneNumber,
+      editStyle,
+      hasInstructions: !!editInstructions,
+    }));
+  } catch (err) {
+    logger.error('onRevisionPaymentConfirmed failed', {
+      orderId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    await wa.sendText(phoneNumber, lang === 'hi'
+      ? 'Kuch gadbad ho gayi. Thodi der mein dobara koshish karein.'
+      : 'Something went wrong. Please try again in a moment.');
   }
 }

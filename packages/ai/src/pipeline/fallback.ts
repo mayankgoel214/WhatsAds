@@ -39,7 +39,8 @@ const STYLE_POST_CONFIG: Record<string, StylePostConfig> = {
   style_festive:     { grain: 0.003, vignette: 0.05, warmthShift: 5, satBoost: 1.04, contrast: 0.96, blackLift: 4 },
   style_outdoor:     { grain: 0.004, vignette: 0.05, warmthShift: 2, satBoost: 1.03, contrast: 0.96, blackLift: 4 },
   style_minimal:     { grain: 0.002, vignette: 0.01, warmthShift: -1, satBoost: 0.95, contrast: 1.02, blackLift: 1 },
-  style_with_model:  { grain: 0.003, vignette: 0.04, warmthShift: 2, satBoost: 1.01, contrast: 0.98, blackLift: 3 },
+  style_with_model:       { grain: 0.003, vignette: 0.04, warmthShift: 2, satBoost: 1.01, contrast: 0.98, blackLift: 3 },
+  style_clickkar_special: { grain: 0.003, vignette: 0.10, warmthShift: 0, satBoost: 1.02, contrast: 1.0, blackLift: 3 },
 };
 
 const DEFAULT_POST_CONFIG: StylePostConfig = { grain: 0, vignette: 0.04, warmthShift: 1, satBoost: 1.02, contrast: 0.98, blackLift: 3 };

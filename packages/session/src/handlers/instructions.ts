@@ -8,7 +8,7 @@ import { downloadMedia } from '@whatsads/whatsapp';
 import type { Session, User } from '@whatsads/db';
 import { prisma } from '@whatsads/db';
 import { transitionTo } from '../db-helpers.js';
-import { msgPhotoReceivedWithPayment, msgProcessingStarted } from '../messages.js';
+import { msgPhotoReceivedWithPayment, msgProcessingNow } from '../messages.js';
 import { PRICE_PER_ORDER_PAISE, OUTPUT_STYLES_PER_ORDER, ButtonIds } from '../types.js';
 import { sendPaymentLink, enqueueImageJobs } from './payment.js';
 import { logger } from '../logger.js';
@@ -110,8 +110,8 @@ export async function createOrderAndSendPayment(params: CreateOrderParams): Prom
       styleSelection: primaryStyleId,
     });
 
-    const processingMsg = msgProcessingStarted(lang);
-    await wa.sendText(phoneNumber, `${confirmationMsg}\n\n${processingMsg}`);
+    const processingMsg = msgProcessingNow(lang, user.name ?? '', imageCount, true);
+    await wa.sendText(phoneNumber, processingMsg);
 
     // Enqueue image jobs using the canonical enqueueImageJobs from payment.ts.
     // Order status is already set to 'processing' above; the canonical function

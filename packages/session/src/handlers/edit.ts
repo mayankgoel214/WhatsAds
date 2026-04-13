@@ -13,11 +13,12 @@
 import type { WhatsAppClient } from '@whatsads/whatsapp';
 import { prisma } from '@whatsads/db';
 import type { Session, User } from '@whatsads/db';
-import { getImageQueue } from '@whatsads/queue';
+import { getImageQueue, getPaymentCheckQueue } from '@whatsads/queue';
 import { downloadMedia } from '@whatsads/whatsapp';
 import { uploadFile, Buckets } from '@whatsads/storage';
 import { transcribeVoiceNote } from '@whatsads/ai';
 import { parseEditInstructions } from '@whatsads/ai';
+import { createPaymentLink } from '@whatsads/payment';
 import { transitionTo } from '../db-helpers.js';
 import {
   msgEditProcessing,
@@ -25,7 +26,10 @@ import {
   msgGenericError,
 } from '../messages.js';
 import {
-  FREE_REDOS_PER_IMAGE,
+  FREE_REDOS_PER_STYLE,
+  OUTPUT_STYLES_PER_ORDER,
+  EDIT_REVISION_PAISE,
+  PAYMENT_CHECK_DELAY_MS,
 } from '../types.js';
 import type { MessageContext } from '../types.js';
 import { logger } from '../logger.js';
@@ -53,16 +57,6 @@ export async function handleAwaitingEdit(
   if (!order) {
     await wa.sendText(session.phoneNumber, msgGenericError(lang));
     await transitionTo(session.phoneNumber, 'IDLE');
-    return;
-  }
-
-  // Check revision limits: each image gets FREE_REDOS_PER_IMAGE free redo(s).
-  // Total free redos for the order = imageCount * FREE_REDOS_PER_IMAGE.
-  const totalFreeRedos = order.imageCount * FREE_REDOS_PER_IMAGE;
-  if (order.revisionsUsed >= totalFreeRedos) {
-    // TODO: send payment link for Rs 29 revision fee
-    await wa.sendText(session.phoneNumber, msgRevisionLimitReached(lang, order.imageCount));
-    await transitionTo(session.phoneNumber, 'DELIVERED');
     return;
   }
 
@@ -154,6 +148,64 @@ export async function handleAwaitingEdit(
     }
   }
 
+  // Check revision limits: each image gets FREE_REDOS_PER_IMAGE free redo(s).
+  // Total free redos for the order = imageCount * FREE_REDOS_PER_IMAGE.
+  // We check AFTER parsing the intent so we can store the pending edit in session
+  // if the user needs to pay Rs 29 for an additional edit.
+  const totalFreeRedos = (order.outputStyleCount || (order.stylesOrdered as string[]).length || OUTPUT_STYLES_PER_ORDER) * FREE_REDOS_PER_STYLE;
+  if (order.revisionsUsed >= totalFreeRedos) {
+    try {
+      const revisionRef = `${order.id}-rev-${order.revisionsUsed + 1}`;
+      const link = await createPaymentLink({
+        orderId: revisionRef,
+        customerPhone: session.phoneNumber.replace(/^\+/, ''),
+        customerName: user.name ?? undefined,
+        amount: EDIT_REVISION_PAISE,
+        description: `Clickkar Edit - Order ${order.id.slice(0, 8)}`,
+        expiresInMinutes: 30,
+      });
+
+      await prisma.order.update({
+        where: { id: order.id },
+        data: {
+          razorpayRevisionLinkId: link.id,
+          razorpayRevisionLinkUrl: link.shortUrl,
+        },
+      });
+
+      await transitionTo(session.phoneNumber, 'AWAITING_REVISION_PAYMENT', {
+        pendingEditStyle: editStyle ?? session.styleSelection,
+        pendingEditInstructions: editInstructions,
+        currentOrderId: order.id,
+      });
+
+      const payMsg = lang === 'hi'
+        ? `Aapke free edits khatam ho gaye. Ek aur edit ke liye Rs 29 pay karein:\n${link.shortUrl}`
+        : `You've used your free edits. Pay Rs 29 for another edit:\n${link.shortUrl}`;
+      await wa.sendText(session.phoneNumber, payMsg);
+
+      const paymentQueue = getPaymentCheckQueue();
+      await paymentQueue.add(
+        'check_payment',
+        {
+          orderId: order.id,
+          phoneNumber: session.phoneNumber,
+          paymentLinkId: link.id,
+          attempt: 0,
+        },
+        {
+          delay: PAYMENT_CHECK_DELAY_MS,
+          jobId: `revision_check_${order.id}_${order.revisionsUsed + 1}`,
+        },
+      );
+    } catch (err) {
+      console.error(JSON.stringify({ event: 'revision_payment_link_failed', error: String(err) }));
+      await wa.sendText(session.phoneNumber, msgRevisionLimitReached(lang, order.imageCount));
+      await transitionTo(session.phoneNumber, 'DELIVERED');
+    }
+    return;
+  }
+
   // If we have something to work with, enqueue the edit job
   if (editStyle || editInstructions) {
     const imageUrls = (order.inputImageUrls as string[]) ?? [];
@@ -171,6 +223,12 @@ export async function handleAwaitingEdit(
           const cutoutUrls = (order.cutoutUrls as string[]) ?? [];
           let jobsCreated = 0;
 
+          // Set order to processing before starting any edit jobs
+          await prisma.order.update({
+            where: { id: order.id },
+            data: { status: 'processing', processingStartedAt: new Date() },
+          });
+
           // When confidence is low but assignments exist, fall back to global instruction for all photos
           const useGlobalFallback =
             parseResult.confidence < 0.4 &&
@@ -184,19 +242,6 @@ export async function handleAwaitingEdit(
 
             const editUrl = cutoutUrls[i] || imageUrls[i] || '';
             if (!editUrl) continue;
-
-            // Each image counts as one redo; update order status on the first job only.
-            // The revisionsUsed total is incremented after the loop (once per image processed).
-            if (jobsCreated === 0) {
-              await prisma.order.update({
-                where: { id: order.id },
-                data: {
-                  status: 'processing',
-                  processingStartedAt: new Date(),
-                  processingCompletedAt: null,
-                },
-              });
-            }
 
             const imageJob = await prisma.imageJob.create({
               data: {

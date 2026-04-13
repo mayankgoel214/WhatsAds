@@ -15,6 +15,10 @@ export interface ProcessImageParams {
   productCategory?: string;
   voiceInstructions?: string;
   maxAttempts?: number;
+  /** Pre-computed multi-angle product profile. Passed from worker when the order has
+   *  multiple input images. The V3 pipeline uses this to skip redundant analysis and
+   *  to provide richer context about all angles of the product. */
+  productProfile?: any;
 }
 
 export interface ProcessImageResult {

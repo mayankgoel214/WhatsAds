@@ -37,7 +37,8 @@ const STYLE_BACKGROUNDS: Record<string, BackgroundConfig> = {
   style_festive:     { r: 120, g: 25,  b: 25,  vignetteR: 80,  vignetteG: 15,  vignetteB: 15  },
   style_clean_white: { r: 255, g: 255, b: 255 },
   style_minimal:     { r: 250, g: 248, b: 245, vignetteR: 230, vignetteG: 228, vignetteB: 225 },
-  style_model:       { r: 235, g: 230, b: 225, vignetteR: 200, vignetteG: 195, vignetteB: 185 },
+  style_model:            { r: 235, g: 230, b: 225, vignetteR: 200, vignetteG: 195, vignetteB: 185 },
+  style_clickkar_special: { r: 30,  g: 30,  b: 30 },
 };
 
 // Festive gets RANDOMIZED rich colors — deep Indian festive palette
@@ -62,7 +63,7 @@ const STUDIO_COLOR_POOL: BackgroundConfig[] = [
 ];
 
 function getBackgroundConfig(style: string): BackgroundConfig {
-  if (style === 'style_studio') {
+  if (style === 'style_studio' || style === 'style_clickkar_special') {
     // Random selection from the color pool
     const idx = Math.floor(Math.random() * STUDIO_COLOR_POOL.length);
     return STUDIO_COLOR_POOL[idx]!;

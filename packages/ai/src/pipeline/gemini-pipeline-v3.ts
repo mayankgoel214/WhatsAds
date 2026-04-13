@@ -166,6 +166,7 @@ function getStyleDirection(style: string): string {
     style_festive: 'Indian festival celebration — diyas, marigolds, rangoli, brass elements, silk fabric. Warm golden-amber tones (2700-3200K). Multiple warm light sources creating layered bokeh.',
     style_minimal: '60-70% intentional negative space. Rule of thirds placement. ONE hard directional light creating a long dramatic shadow. Zero props.',
     style_with_model: 'Person actively holding/wearing/using the product in a natural setting. Shallow DOF, editorial lifestyle feel.',
+    style_clickkar_special: 'Full creative freedom — choose the single most compelling, scroll-stopping direction for this specific product. Think beyond templates: unexpected settings, bold cinematic lighting, dynamic energy, emotional storytelling. The product is the undeniable hero.',
   };
   return directions[style] ?? directions['style_lifestyle']!;
 }
@@ -219,9 +220,41 @@ export async function processProductImageV3(
   // Stage 2: V3 Creative Concept Analysis
   // -------------------------------------------------------------------------
 
-  console.info(JSON.stringify({ event: 'v3_stage2_start' }));
+  console.info(JSON.stringify({ event: 'v3_stage2_start', hasProductProfile: !!params.productProfile }));
 
-  const plan = await analyzeAndPlanV3(processedBuffer, params.voiceInstructions, params.style).catch(
+  // Build a concise context string from the pre-computed multi-angle profile so Gemini
+  // gets richer product info without re-inferring details it already has from all angles.
+  let profileContext: string | undefined;
+  if (params.productProfile) {
+    const p = params.productProfile;
+    profileContext = [
+      p.productName ? `Product: ${p.productName}` : null,
+      p.brandName ? `Brand: ${p.brandName}` : 'Brand: none (unbranded)',
+      p.productType ? `Type: ${p.productType}` : null,
+      p.specificDescription ? `Description: ${p.specificDescription}` : null,
+      p.dominantColors?.length ? `Colors: ${(p.dominantColors as string[]).join(', ')}` : null,
+      p.material ? `Material: ${p.material}` : null,
+      p.shape ? `Shape: ${p.shape}` : null,
+      `Has branding: ${p.hasBranding ? 'YES' : 'NO'} (confidence: ${p.brandingConfidence})`,
+      p.brandElements?.length ? `Brand elements: ${(p.brandElements as string[]).join(', ')}` : null,
+      `Physical size: ${p.productPhysicalSize}`,
+      `Dimensionality: ${p.productDimensionality}`,
+      `Category: ${p.productCategory}`,
+      `Price segment: ${p.priceSegment}`,
+      `Target audience: ${p.targetAudience}`,
+      `Desired emotion: ${p.desiredEmotion}`,
+      p.crossAngleInsights ? `Cross-angle insights: ${p.crossAngleInsights}` : null,
+      p.visibleText?.length ? `Visible text across all angles: ${(p.visibleText as string[]).join(', ')}` : null,
+    ].filter(Boolean).join('\n');
+    console.info(JSON.stringify({
+      event: 'v3_using_multi_angle_profile',
+      primaryIndex: p.primaryImageIndex,
+      productName: p.productName,
+      hasBranding: p.hasBranding,
+    }));
+  }
+
+  const plan = await analyzeAndPlanV3(processedBuffer, params.voiceInstructions, params.style, profileContext).catch(
     (err): AnalyzeAndPlanV3Result | null => {
       console.error(JSON.stringify({
         event: 'v3_analyze_error',
@@ -304,6 +337,7 @@ export async function processProductImageV3(
       style_festive: 'Shot on Canon EOS R5, 85mm f/1.4L, ISO 400. Multiple warm light sources (diyas, fairy lights) creating layered golden bokeh circles at different depths. Warm film-like rendering.',
       style_minimal: 'Shot on Hasselblad X2D 100C, 120mm f/4, ISO 64. Single hard light source. Clinical sharpness. Architectural precision. The shadow cast is as important as the product.',
       style_with_model: 'Shot on Canon EOS R5, 85mm f/1.4L, ISO 100. Shallow depth of field. Person and product sharp, background melting into bokeh. Warm, editorial fashion/lifestyle feel.',
+      style_clickkar_special: 'Shot on the perfect cinema camera for this specific product — the photographer selected the ideal focal length, aperture, and ISO to maximize emotional impact. The gear choices serve the story, not a template.',
     };
     return specs[style] ?? specs['style_lifestyle']!;
   }
@@ -340,6 +374,8 @@ export async function processProductImageV3(
       ? `\nUSER'S CREATIVE DIRECTION (apply ONLY what is relevant to the product in this photo):
 "${params.voiceInstructions.slice(0, 300)}"
 RULES FOR APPLYING THIS INSTRUCTION:
+- MULTI-STYLE AWARENESS: The user's instruction may reference multiple styles (e.g., "make the studio red and the model in a church"). Apply ONLY the parts relevant to THIS style (${params.style}). If the instruction mentions a setting or change for a DIFFERENT style, IGNORE that part completely. If no part of the instruction is relevant to this style, proceed as if no instruction was given.
+- MODEL REFERENCES: If the user mentions "the model", "the person", "someone holding", or describes a person's characteristics (age, gender, ethnicity, clothing), this applies ONLY to the style_with_model style. For ALL other styles, do NOT add a person based on these instructions. Other styles have their own rules about whether people appear (most styles explicitly prohibit people).
 - This may reference MULTIPLE products from different photos (e.g., "bag ko pink, watch ko gold"). Only follow the part that applies to the product shown in this photo. IGNORE references to other products. Do NOT add other products to this image.
 - PRODUCT INTEGRITY: Color and style instructions apply to the SCENE/ENVIRONMENT only — NEVER alter the product itself. Do NOT change the product's colors, materials, strap, case, fabric, lid, label, or any physical attribute. The product must look IDENTICAL to the input photo. Only modify a product part if the user EXPLICITLY names it (e.g., "make the strap blue").
 - If the user mentions a COLOR for the background/scene: use that color as the DOMINANT TONE throughout the environment — in surfaces, lighting, props, atmosphere. Create a rich textured scene in that color, NOT a flat solid-color wall. Example: "red background" = warm red-toned scene with depth and dimension, not a plain red wall.
@@ -348,7 +384,13 @@ RULES FOR APPLYING THIS INSTRUCTION:
       : '';
 
     const colorEnforcement = validPlan.analysis?.dominantColors?.length
-      ? `The product's colors are: ${validPlan.analysis.dominantColors.join(', ')}. These colors MUST be preserved EXACTLY as in the input photo — do not shift gold to silver, do not desaturate warm tones, do not change the material color under any lighting condition. Even if the user asks for a color change in the background/scene, the PRODUCT ITSELF stays these exact colors unless they explicitly name a product part to change.`
+      ? `The product's colors are: ${validPlan.analysis.dominantColors.join(', ')}. These colors MUST be preserved EXACTLY as in the input photo — do not shift gold to silver, do not desaturate warm tones, do not change the material color under any lighting condition. Even if the user asks for a color change in the background/scene, the PRODUCT ITSELF stays these exact colors unless they explicitly name a product part to change. The product surface finish (matte, glossy, frosted, transparent) must match the input EXACTLY. Do not add surface effects like condensation, water beads, or frost that change the product's visual texture.`
+      : '';
+
+    const studioRule = params.style === 'style_studio'
+      ? `\nSTUDIO PROPS: Props are ONLY allowed if directly derived from the product — its ingredients, flavors, materials, or primary use-case. Chips bag → scattered chips + flavor ingredients (chili peppers, lime slices). Skincare → key botanical ingredients (rose petals, aloe). Coffee product → coffee beans. If no relevant props exist for this product, use ZERO props — just the product on the colored backdrop. A plain water bottle = no props. A gold necklace = soft velvet fabric only.\n`
+      : params.style === 'style_clean_white'
+      ? `\nCLEAN WHITE RULE: ZERO props. Only the product on a pure white background. No objects, no decorations, no scattered items. Just the product and its shadow.\n`
       : '';
 
     return `${getCameraSpec(params.style ?? 'style_lifestyle')}
@@ -357,7 +399,7 @@ ABSOLUTE PRODUCT INTEGRITY RULES (NEVER VIOLATE):
 - The product in the output MUST be a pixel-perfect recreation of the input product. Same shape, same proportions, same colors, same opacity, same material finish.
 - EMPTY containers STAY EMPTY. If the bottle/jar/container has no visible liquid in the input photo, it MUST remain empty in the output. Do NOT add water, juice, liquid, or any colored substance inside.
 - Do NOT change the product's color under ANY circumstance. A dark grey bottle stays dark grey. A clear bottle stays clear. Lighting can affect perceived color slightly but the BASE color must match.
-- Do NOT add condensation, water droplets, frost, or moisture to the product surface unless clearly visible in the input photo.
+- Do NOT add condensation, water droplets, frost, dew, or moisture to the product surface. The product must appear EXACTLY as dry or wet as in the input photo. Even if the product is a water bottle or beverage container, if the input photo shows a DRY surface, the output MUST show a DRY surface. Water droplets on a product that is dry in the input photo is a PRODUCT ALTERATION and is UNACCEPTABLE.
 - Do NOT change the product's proportions. If the bottle is tall and slim, it stays tall and slim. Do not make it squatter, wider, or shorter.
 
 A photograph of a product advertisement. Edge-to-edge composition, no borders or frames. Exactly one product instance.${params.style !== 'style_with_model' ? ' No people, hands, or body parts anywhere.' : ''} The product from the input photo fills ${isSmall ? 'the majority of the frame in tight macro' : (isLifestyle || isOutdoor ? '40-50%' : fillPct + '%')} of the frame.
@@ -365,10 +407,14 @@ ${userInstructionBlock}
 ${warningBlock}
 ${validPlan.creativeBrief}
 ${heroDynamic}
+${studioRule}
+OVERRIDE: Regardless of what the creative brief says above, the product surface must remain EXACTLY as in the input photo. If the brief mentions condensation, water droplets, or frost — IGNORE those instructions for the product surface. The product is DRY unless it was wet in the input.
 
 Product: ${productName}.${componentsList} ${colorEnforcement} Every logo, text, and brand mark preserved exactly as in the input photo.${!allowCondensation ? ' Product surface is completely dry — no water or condensation.' : ''}${!allowWaterEffects ? '\nNo water, liquid, splashes, droplets, or moisture anywhere in the scene. This product has nothing to do with water or liquids.' : ''}
 
 The product shows real material properties — packaging catches light with specular highlights, surfaces have micro-texture at full resolution. The product looks PHOTOGRAPHED, not rendered.${params.style === 'style_with_model' ? `
+
+CRITICAL FOR WITH MODEL: The product MUST maintain its EXACT original shape, size, and form factor when held by the person. A small flat pouch stays a SMALL FLAT POUCH — do not turn it into a handbag or clutch. A wristlet stays a wristlet — do not change it to a shoulder bag. The person's hands must grip the product AS IT IS, not reshape it to fit a different product type. If the product is too small to be clearly visible when held, show the person PRESENTING it (holding it up to camera, resting it on an open palm) rather than obscuring it in a grip.
 
 One Indian/South Asian person actively using the product. Natural features: visible pores, asymmetric expression, flyaway hair. Each hand has exactly 5 fingers. Natural body proportions.` : ''}`;
   }
@@ -559,6 +605,11 @@ One Indian/South Asian person actively using the product. Natural features: visi
       }
       adBuffer = null;
       continue;
+    }
+
+    // ------- INSTRUCTION COMPLIANCE CHECK -------
+    if (lastFocused && lastFocused.instructionFollowed === false && params.voiceInstructions) {
+      retryWarnings.push(`Previous attempt IGNORED the user's instruction: "${params.voiceInstructions.slice(0, 100)}". The next attempt MUST incorporate this instruction visibly.`);
     }
 
     // ------- LAYER 2: AI Quality Scoring -------

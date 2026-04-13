@@ -8,7 +8,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { verifyRazorpaySignature, parsePaymentLinkPaidEvent } from '@whatsads/payment';
 import { prisma } from '@whatsads/db';
 import { WhatsAppClient } from '@whatsads/whatsapp';
-import { onPaymentConfirmed } from '@whatsads/session';
+import { onPaymentConfirmed, onRevisionPaymentConfirmed } from '@whatsads/session';
 import { getConfig } from '../../config.js';
 
 export async function razorpayWebhookRoutes(app: FastifyInstance): Promise<void> {
@@ -63,13 +63,45 @@ export async function razorpayWebhookRoutes(app: FastifyInstance): Promise<void>
         return;
       }
 
-      // Find order by payment link ID
+      // Find order by primary payment link ID OR revision payment link ID
       const order = await prisma.order.findFirst({
-        where: { razorpayPaymentLinkId: event.paymentLinkId },
+        where: {
+          OR: [
+            { razorpayPaymentLinkId: event.paymentLinkId },
+            { razorpayRevisionLinkId: event.paymentLinkId },
+          ],
+        },
       });
 
       if (!order) {
         app.log.error({ paymentLinkId: event.paymentLinkId }, 'Order not found for payment');
+        return;
+      }
+
+      // Create WhatsApp client — shared for both payment paths
+      const wa = new WhatsAppClient({
+        accessToken: config.WHATSAPP_ACCESS_TOKEN,
+        phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
+      });
+
+      // Check if this is a revision payment (Rs 29) vs primary order payment (Rs 199)
+      if (order.razorpayRevisionLinkId === event.paymentLinkId) {
+        app.log.info({ orderId: order.id, paymentLinkId: event.paymentLinkId }, 'Revision payment received');
+
+        // Record the payment
+        await prisma.payment.create({
+          data: {
+            orderId: order.id,
+            razorpayPaymentId: event.paymentId,
+            razorpayPaymentLinkId: event.paymentLinkId,
+            amount: event.amount,
+            method: event.method,
+            status: 'captured',
+            capturedAt: new Date(),
+          },
+        });
+
+        await onRevisionPaymentConfirmed(order.id, wa);
         return;
       }
 
@@ -85,12 +117,6 @@ export async function razorpayWebhookRoutes(app: FastifyInstance): Promise<void>
           status: 'captured',
           capturedAt: new Date(),
         },
-      });
-
-      // Create WhatsApp client and trigger session flow
-      const wa = new WhatsAppClient({
-        accessToken: config.WHATSAPP_ACCESS_TOKEN,
-        phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
       });
 
       await onPaymentConfirmed(order.id, event.paymentId, wa);

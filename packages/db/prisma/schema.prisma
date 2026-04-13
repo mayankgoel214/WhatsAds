@@ -25,6 +25,7 @@ enum SessionState {
   PROCESSING
   DELIVERED
   EDIT_PROCESSING
+  AWAITING_REVISION_PAYMENT
 }
 
 enum OrderStatus {
@@ -105,8 +106,10 @@ model Session {
   voiceInstructions   String?      @map("voice_instructions")
   imageMediaIds       String[]     @map("image_media_ids")
   imageStorageUrls    String[]     @map("image_storage_urls")
-  earlyPhotoMediaId   String?      @map("early_photo_media_id")
-  lastUserMessageAt   DateTime?    @map("last_user_message_at")
+  earlyPhotoMediaId           String?      @map("early_photo_media_id")
+  pendingEditStyle            String?      @map("pending_edit_style")
+  pendingEditInstructions     String?      @map("pending_edit_instructions")
+  lastUserMessageAt           DateTime?    @map("last_user_message_at")
   stateEnteredAt      DateTime?    @map("state_entered_at")
   cswExpiresAt        DateTime?    @map("csw_expires_at")
   createdAt           DateTime     @default(now()) @map("created_at")
@@ -139,9 +142,11 @@ model Order {
   amount                  Int         // in paise
   revisionsUsed           Int         @default(0) @map("revisions_used")
   maxFreeRevisions        Int         @default(2) @map("max_free_revisions")
-  razorpayPaymentLinkId   String?     @map("razorpay_payment_link_id")
-  razorpayPaymentLinkUrl  String?     @map("razorpay_payment_link_url")
-  razorpayPaymentId       String?     @map("razorpay_payment_id")
+  razorpayPaymentLinkId       String?     @map("razorpay_payment_link_id")
+  razorpayPaymentLinkUrl      String?     @map("razorpay_payment_link_url")
+  razorpayPaymentId           String?     @map("razorpay_payment_id")
+  razorpayRevisionLinkId      String?     @map("razorpay_revision_link_id")
+  razorpayRevisionLinkUrl     String?     @map("razorpay_revision_link_url")
   qaBestScore             Float?      @map("qa_best_score")
   qaAttempts              Int         @default(0) @map("qa_attempts")
   productCategory         String?     @map("product_category")

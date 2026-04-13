@@ -12,7 +12,7 @@ import { prisma } from '@whatsads/db';
 import { getImageQueue } from '@whatsads/queue';
 import { transitionTo } from '../db-helpers.js';
 import { styleDisplayName, msgRevisionLimitReached, msgStylePicked, msgAllStylesReady, msgSendProductPhotos, msgStylePackReady } from '../messages.js';
-import { ListIds, ButtonIds, FREE_REDOS_PER_IMAGE, OUTPUT_STYLES_PER_ORDER } from '../types.js';
+import { ListIds, ButtonIds, FREE_REDOS_PER_STYLE, OUTPUT_STYLES_PER_ORDER } from '../types.js';
 import type { MessageContext } from '../types.js';
 import { logger } from '../logger.js';
 
@@ -121,9 +121,9 @@ export async function handleSetupStyle(
   if (session.currentOrderId) {
     const order = await prisma.order.findUnique({ where: { id: session.currentOrderId } });
     if (order && order.inputImageUrls.length > 0) {
-      // Check revision limits: each image gets FREE_REDOS_PER_IMAGE free redo(s).
-      // Total free redos for the order = imageCount * FREE_REDOS_PER_IMAGE.
-      const totalFreeRedos = order.imageCount * FREE_REDOS_PER_IMAGE;
+      // Check revision limits: each output style gets FREE_REDOS_PER_STYLE free redo(s).
+      // Total free redos for the order = outputStyleCount * FREE_REDOS_PER_STYLE.
+      const totalFreeRedos = (order.outputStyleCount || (order.stylesOrdered as string[]).length || OUTPUT_STYLES_PER_ORDER) * FREE_REDOS_PER_STYLE;
       if (order.revisionsUsed >= totalFreeRedos) {
         await wa.sendText(phoneNumber, msgRevisionLimitReached(lang, order.imageCount));
         await transitionTo(phoneNumber, 'DELIVERED');
@@ -205,7 +205,8 @@ export async function handleSetupStyle(
   const currentPicked = (session.styleSelections as string[]) ?? [];
   const currentStep = typeof session.stylePickStep === 'number' ? session.stylePickStep : 0;
   const updatedSelections = [...currentPicked, styleId];
-  const newStep = currentStep + 1;
+  const cappedSelections = updatedSelections.slice(0, OUTPUT_STYLES_PER_ORDER);
+  const newStep = Math.min(cappedSelections.length, OUTPUT_STYLES_PER_ORDER);
 
   logger.info('Style step picked', { phoneNumber, styleId, newStep, total: OUTPUT_STYLES_PER_ORDER });
 
@@ -214,29 +215,29 @@ export async function handleSetupStyle(
     await prisma.session.update({
       where: { phoneNumber },
       data: {
-        styleSelections: updatedSelections,
+        styleSelections: cappedSelections,
         stylePickStep: newStep,
         // Keep styleSelection as first pick for backward compat
-        styleSelection: updatedSelections[0] ?? null,
+        styleSelection: cappedSelections[0] ?? null,
       },
     });
 
     await wa.sendText(phoneNumber, msgStylePicked(lang, styleName, newStep));
 
     const { sendStyleList } = await import('./onboarding.js');
-    await sendStyleList(phoneNumber, lang, wa, user.businessType ?? undefined, updatedSelections);
+    await sendStyleList(phoneNumber, lang, wa, user.businessType ?? undefined, cappedSelections);
     return;
   }
 
   // All 3 custom styles picked — now go to AWAITING_PHOTO (photos come after styles)
-  const styleNames = updatedSelections.map(s => styleDisplayName(s, lang));
+  const styleNames = cappedSelections.map(s => styleDisplayName(s, lang));
   await wa.sendText(phoneNumber, msgAllStylesReady(lang, styleNames));
 
-  logger.info('Custom 3-step style pick complete, transitioning to AWAITING_PHOTO', { phoneNumber, styles: updatedSelections });
+  logger.info('Custom 3-step style pick complete, transitioning to AWAITING_PHOTO', { phoneNumber, styles: cappedSelections });
 
   await transitionTo(phoneNumber, 'AWAITING_PHOTO', {
-    styleSelection: updatedSelections[0],
-    styleSelections: updatedSelections,
+    styleSelection: cappedSelections[0],
+    styleSelections: cappedSelections,
     stylePickStep: 0,
     imageMediaIds: [],
     imageStorageUrls: [],
@@ -307,17 +308,18 @@ function packDisplayName(packId: string, lang: 'hi' | 'en'): string {
  */
 function resolveSmartPack(category: string | null): string[] {
   const mapping: Record<string, string[]> = {
-    cat_jewellery: ['style_gradient', 'style_lifestyle', 'style_clean_white'],
-    cat_food: ['style_lifestyle', 'style_outdoor', 'style_studio'],
-    cat_garment: ['style_lifestyle', 'style_with_model', 'style_clean_white'],
-    cat_skincare: ['style_clean_white', 'style_lifestyle', 'style_gradient'],
-    cat_candle: ['style_lifestyle', 'style_festive', 'style_gradient'],
-    cat_bag: ['style_lifestyle', 'style_outdoor', 'style_studio'],
+    cat_jewellery: ['style_clickkar_special', 'style_gradient', 'style_lifestyle'],
+    cat_food: ['style_clickkar_special', 'style_lifestyle', 'style_outdoor'],
+    cat_garment: ['style_clickkar_special', 'style_lifestyle', 'style_with_model'],
+    cat_skincare: ['style_clickkar_special', 'style_clean_white', 'style_lifestyle'],
+    cat_candle: ['style_clickkar_special', 'style_lifestyle', 'style_festive'],
+    cat_bag: ['style_clickkar_special', 'style_lifestyle', 'style_outdoor'],
   };
-  return mapping[category ?? ''] ?? ['style_lifestyle', 'style_studio', 'style_gradient'];
+  return mapping[category ?? ''] ?? ['style_clickkar_special', 'style_lifestyle', 'style_studio'];
 }
 
 function resolveStyleFromText(text: string): string | null {
+  if (text.includes('special') || text.includes('clickkar') || text.includes('best') || text.includes('creative')) return ListIds.STYLE_CLICKKAR_SPECIAL;
   if (text.includes('white') || text.includes('safed') || text.includes('clean')) return ListIds.STYLE_CLEAN_WHITE;
   if (text.includes('lifestyle') || text.includes('life')) return ListIds.STYLE_LIFESTYLE;
   if (text.includes('gradient') || text.includes('color') || text.includes('colour')) return ListIds.STYLE_GRADIENT;

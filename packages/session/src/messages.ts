@@ -157,6 +157,23 @@ export function msgPhotoReceivedWithPayment(
   return `Photo received, ${name}!\n${photoText} • 3 professional ads\nRs ${totalRs}`;
 }
 
+/** Single combined message used when processing starts (free order or after payment). */
+export function msgProcessingNow(
+  lang: Lang,
+  name: string,
+  imageCount: number,
+  isFree: boolean,
+): string {
+  const photoText = imageCount > 1 ? `${imageCount} photos` : '1 photo';
+  const freeNote = isFree
+    ? (lang === 'hi' ? '\nPehla order free hai! Rs 0' : '\nFirst one is free! Rs 0')
+    : '';
+  if (lang === 'hi') {
+    return `Shuru ho gaya, ${name} ji! 🎨\n${photoText} • 3 professional ads\nAapke 3 ads ban rahe hain... 2-3 minute mein ready!${freeNote} ⏳`;
+  }
+  return `Let's go, ${name}! 🎨\n${photoText} • 3 professional ads\nMaking your 3 ads now... ready in 2-3 minutes!${freeNote} ⏳`;
+}
+
 // ---------------------------------------------------------------------------
 // RETURNING USER + PHOTO (confirm style)
 // ---------------------------------------------------------------------------
@@ -174,16 +191,9 @@ export function msgConfirmStyleForPhoto(lang: Lang, name: string, styleName: str
 
 export function msgPaymentConfirmed(lang: Lang): string {
   if (lang === 'hi') {
-    return 'Payment mil gayi! Aapki photo banana shuru kar rahe hain...';
+    return 'Payment mil gayi! Aapke 3 ads ban rahe hain... 2-3 minute mein ready! ⏳';
   }
-  return 'Payment received! Starting to process your photo now...';
-}
-
-export function msgProcessingStarted(lang: Lang): string {
-  if (lang === 'hi') {
-    return 'Ho gaya! ✨ Ab 1-2 minute mein aapki photo aayegi.';
-  }
-  return 'Done! ✨ Your photo will be ready in about 1-2 minutes.';
+  return 'Payment received! Making your 3 ads now... ready in 2-3 minutes! ⏳';
 }
 
 export function msgPaymentPending(lang: Lang): string {
@@ -284,13 +294,17 @@ export function msgEditProcessing(lang: Lang): string {
   return 'Applying your changes... ready shortly.';
 }
 
+/**
+ * Fallback message when revision payment link creation fails.
+ * Under normal operation the user receives a Rs 29 payment link instead.
+ */
 export function msgRevisionLimitReached(lang: Lang, imageCount = 1): string {
   // Each image gets 1 free redo. Total free redos = imageCount.
   const freeRedos = imageCount;
   if (lang === 'hi') {
-    return `${freeRedos} free redo${freeRedos > 1 ? 's' : ''} ho ${freeRedos > 1 ? 'chuke' : 'chuka'} hai is order ke liye (har image ke liye 1 free redo). ✨\n\nNaya photo bhejne ke liye "hi" bhejein!`;
+    return `${freeRedos} free redo${freeRedos > 1 ? 's' : ''} ho ${freeRedos > 1 ? 'chuke' : 'chuka'} hai is order ke liye. Abhi naya photo start karein — "hi" bhejein!`;
   }
-  return `You've used your ${freeRedos} free redo${freeRedos > 1 ? 's' : ''} for this order (1 free redo per image). ✨\n\nSend "hi" to start a new photo!`;
+  return `You've used your ${freeRedos} free redo${freeRedos > 1 ? 's' : ''} for this order. Start a new photo — send "hi"!`;
 }
 
 // ---------------------------------------------------------------------------
@@ -325,6 +339,7 @@ export function msgEarlyPhotoAck(lang: Lang): string {
 export function styleDisplayName(styleId: string, lang: Lang): string {
   const names: Record<string, { hi: string; en: string }> = {
     style_smart: { hi: '✨ Smart Style', en: '✨ Smart Style' },
+    style_clickkar_special: { hi: 'Clickkar Special ✨', en: 'Clickkar Special ✨' },
     style_clean_white: { hi: 'Saaf Safed Background', en: 'Clean White Background' },
     style_lifestyle: { hi: 'Lifestyle Setting', en: 'Lifestyle Setting' },
     style_gradient: { hi: 'Dark Luxury', en: 'Dark Luxury' },

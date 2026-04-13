@@ -9,7 +9,7 @@ import type { Job } from 'bullmq';
 import { prisma } from '@whatsads/db';
 import { pollPaymentStatus } from '@whatsads/payment';
 import { WhatsAppClient } from '@whatsads/whatsapp';
-import { onPaymentConfirmed } from '@whatsads/session';
+import { onPaymentConfirmed, onRevisionPaymentConfirmed } from '@whatsads/session';
 import { getPaymentCheckQueue, PaymentCheckJobDataSchema } from '@whatsads/queue';
 import { getConfig } from '../config.js';
 
@@ -29,7 +29,10 @@ export async function processPaymentCheck(job: Job): Promise<void> {
     return;
   }
 
-  if (order.status !== 'payment_pending') {
+  // Determine if this is a revision payment check by comparing link IDs
+  const isRevisionPayment = order.razorpayRevisionLinkId === data.paymentLinkId;
+
+  if (!isRevisionPayment && order.status !== 'payment_pending') {
     log('Order no longer pending, skipping', { status: order.status });
     return;
   }
@@ -38,7 +41,7 @@ export async function processPaymentCheck(job: Job): Promise<void> {
   const status = await pollPaymentStatus(data.paymentLinkId);
 
   if (status.status === 'paid' && status.paymentId) {
-    log('Payment confirmed via polling');
+    log('Payment confirmed via polling', { isRevisionPayment });
 
     // Check idempotency
     const existing = await prisma.payment.findUnique({
@@ -46,33 +49,49 @@ export async function processPaymentCheck(job: Job): Promise<void> {
     });
 
     if (!existing) {
-      // Create payment record and update order atomically
-      await prisma.$transaction([
-        prisma.payment.create({
-          data: {
-            orderId: order.id,
-            razorpayPaymentId: status.paymentId,
-            razorpayPaymentLinkId: data.paymentLinkId,
-            amount: order.amount,
-            status: 'captured',
-            capturedAt: new Date(),
-          },
-        }),
-        prisma.order.update({
-          where: { id: order.id },
-          data: {
-            status: 'payment_confirmed',
-            razorpayPaymentId: status.paymentId,
-          },
-        }),
-      ]);
-
       const wa = new WhatsAppClient({
         accessToken: config.WHATSAPP_ACCESS_TOKEN,
         phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
       });
 
-      await onPaymentConfirmed(order.id, status.paymentId, wa);
+      if (isRevisionPayment) {
+        // Record revision payment and trigger edit job
+        await prisma.payment.create({
+          data: {
+            orderId: order.id,
+            razorpayPaymentId: status.paymentId,
+            razorpayPaymentLinkId: data.paymentLinkId,
+            amount: 2900, // Rs 29 revision fee in paise
+            status: 'captured',
+            capturedAt: new Date(),
+          },
+        });
+
+        await onRevisionPaymentConfirmed(order.id, wa);
+      } else {
+        // Create payment record and update order atomically
+        await prisma.$transaction([
+          prisma.payment.create({
+            data: {
+              orderId: order.id,
+              razorpayPaymentId: status.paymentId,
+              razorpayPaymentLinkId: data.paymentLinkId,
+              amount: order.amount,
+              status: 'captured',
+              capturedAt: new Date(),
+            },
+          }),
+          prisma.order.update({
+            where: { id: order.id },
+            data: {
+              status: 'payment_confirmed',
+              razorpayPaymentId: status.paymentId,
+            },
+          }),
+        ]);
+
+        await onPaymentConfirmed(order.id, status.paymentId, wa);
+      }
     }
     return;
   }

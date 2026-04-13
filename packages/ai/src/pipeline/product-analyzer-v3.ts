@@ -332,6 +332,8 @@ MODEL: Indian/South Asian person, candid expression caught mid-action. Natural s
 ANATOMY (CRITICAL): Exactly 2 arms, 2 legs, 2 feet, 2 hands. Each hand has exactly 5 fingers. When seated or in complex poses, every limb must be CLEARLY distinguishable — no ambiguous merged legs or phantom limbs. Natural body proportions throughout.
 
 GRIP: Match product size/weight — pinch for flat items, wrap for bottles, cup for jars. NEVER pose for camera.`,
+
+  style_clickkar_special: `Shot on a high-end cinema camera. The photographer chose the perfect lens, angle, and lighting for maximum impact. Every element serves the story.`,
 };
 
 // ---------------------------------------------------------------------------
@@ -420,18 +422,32 @@ Example 8 — Wireless Earbuds Case (style_gradient — NEON ACCENT):
 
 function getStyleMandate(style: string): string {
   const mandates: Record<string, string> = {
-    style_festive: 'FESTIVE/DIWALI SCENE: Warm diya glow (2700-3000K), cultural props (brass thali, marigold petals, rangoli), golden bokeh, rich jewel tones. Scene must feel like an Indian celebration/festival. NO modern/gym/office settings.',
-    style_gradient: 'DARK LUXURY: Deep black or dark gradient background, dramatic rim lighting, reflective surface, minimal props. Moody, premium, cinematic feel. NO bright/outdoor/festive settings.',
-    style_outdoor: 'NATURAL OUTDOOR: Golden-hour natural light, organic textures (wood, stone, leaves), real outdoor environment. NO studio/indoor settings.',
-    style_lifestyle: 'LIFESTYLE SETTING: Warm home/cafe/workspace environment, natural light, lived-in feel with contextual props. Aspirational but relatable.',
+    style_festive: 'FESTIVE/DIWALI SCENE: Warm diya glow (2700-3000K), cultural props (brass thali, marigold petals, rangoli), golden bokeh, rich jewel tones. Scene must feel like an Indian celebration/festival. NO modern/gym/office settings. Props should be relevant to the product and follow best advertising practices for the product category.',
+    style_gradient: 'DARK LUXURY: Deep black or dark gradient background, dramatic rim lighting, reflective surface, minimal props. Moody, premium, cinematic feel. NO bright/outdoor/festive settings. Props should be relevant to the product and follow best advertising practices for the product category.',
+    style_outdoor: 'NATURAL OUTDOOR: Golden-hour natural light, organic textures (wood, stone, leaves), real outdoor environment. NO studio/indoor settings. Props should be relevant to the product and follow best advertising practices for the product category.',
+    style_lifestyle: 'LIFESTYLE SETTING: Warm home/cafe/workspace environment, natural light, lived-in feel with contextual props. Aspirational but relatable. Props should be relevant to the product and follow best advertising practices for the product category.',
     style_studio: `COLORED STUDIO: Clean colored backdrop — NEVER white or grey. Choose a SPECIFIC, BOLD color:
 - For warm-toned products (gold, red, orange, brown): use cool backdrops (teal, navy, sage green, slate blue)
 - For cool-toned products (blue, silver, white, green): use warm backdrops (terracotta, dusty rose, warm sand, burnt sienna)
 - For neutral products: use bold saturated colors (deep teal, rich burgundy, emerald, royal purple)
-State the EXACT color name in your creativeBrief. Professional studio lighting, product-focused.`,
-    style_clean_white: 'CLEAN WHITE: Pure white background, soft even lighting, product floating or on minimal surface. E-commerce style.',
+State the EXACT color name in your creativeBrief. Professional studio lighting, product-focused.
+PROPS RULE: Props are ALLOWED but ONLY if directly derived from the product — its ingredients, flavors, materials, or primary use-case. Examples: a chips bag with its flavor ingredients (chili peppers, lime slices, scattered chips), skincare with its key botanical ingredient (rose petals, aloe leaves), a coffee product with coffee beans. If nothing relevant can be derived from the product, use ZERO props. A plain water bottle = no props. A gold necklace = soft velvet fabric only. Props must enhance the product story, not distract from it.`,
+    style_clickkar_special: `CLICKKAR SPECIAL — CREATIVE FREEDOM MODE.
+You are a world-class advertising art director at a top creative agency. Your job is to create the single most COMPELLING, scroll-stopping advertisement possible for this product.
+
+DO NOT default to any template. DO NOT use a plain background. Think BOLD.
+
+Consider what makes award-winning product ads:
+- A story that triggers emotion (desire, craving, aspiration, wonder)
+- Unexpected but fitting creative direction (a perfume bottle in a rain-soaked Parisian street, a snack bag exploding with ingredients mid-air, a watch on volcanic rock at sunset)
+- Cinematic lighting that makes the product GLOW
+- Dynamic elements that create visual energy
+- A scene that makes the viewer WANT this product
+
+Choose the creative direction that will make someone stop scrolling on Instagram and think "I need this." Be brave. Be original. The only rule: the product must be the undeniable hero.`,
+    style_clean_white: 'CLEAN WHITE: Pure white background, soft even lighting, product floating or on minimal surface. E-commerce style. ZERO props — only the product on pure white. No objects, no decorations, no ingredients scattered around the product. Just the product and its shadow.',
     style_minimal: 'MINIMAL & CLEAN: Muted neutral tones, very few props, lots of negative space, calm and elegant composition.',
-    style_with_model: 'WITH HUMAN MODEL: An Indian person naturally interacting with the product. Lifestyle context appropriate to the product category.',
+    style_with_model: 'WITH HUMAN MODEL: An Indian person naturally interacting with the product. Lifestyle context appropriate to the product category. The product MUST keep its EXACT original shape and form factor. Do NOT redesign it to fit the person\'s pose. A pouch stays a pouch, a bottle stays a bottle, earrings stay earrings. The person adapts to the product, not the other way around.',
   };
   return mandates[style] ?? 'Follow the selected style closely.';
 }
@@ -552,6 +568,8 @@ If this product is a cold beverage (isColdBeverage = true), ALL of the following
   * Jewellery → velvet fabric, soft bokeh lights, reflective surfaces
   * Fitness product → gym equipment, sweat towel, water splash
   The props should feel like they BELONG in the scene, not randomly placed. They should reinforce what the product IS and what it DOES.
+  EXCEPTION — style_clean_white: ZERO props. Only the product on pure white, no exceptions.
+  EXCEPTION — style_studio: Props ONLY if directly derived from the product (ingredients, flavors, materials). If nothing relevant exists, use ZERO props.
 
 - LIGHTING LANGUAGE: Do NOT describe light as technical specifications (key light, fill light, ratios). Describe light as a PHYSICAL PRESENCE: "warm golden light spills across from the left", "a single beam cuts through darkness catching every edge", "soft diffused glow wraps the product". The image generator renders light better when described poetically, not technically.
 
@@ -695,7 +713,8 @@ function detectMime(buf: Buffer): 'image/jpeg' | 'image/png' | 'image/webp' {
 export async function analyzeAndPlanV3(
   imageBuffer: Buffer,
   voiceInstructions?: string,
-  style?: string
+  style?: string,
+  profileContext?: string,
 ): Promise<AnalyzeAndPlanV3Result> {
   const startMs = Date.now();
 
@@ -706,7 +725,22 @@ export async function analyzeAndPlanV3(
   const base64Image = imageBuffer.toString('base64');
   const mimeType = detectMime(imageBuffer);
 
-  const prompt = buildV3Prompt(style, voiceInstructions);
+  let prompt = buildV3Prompt(style, voiceInstructions);
+
+  // Prepend pre-computed multi-angle profile data when available so Gemini
+  // has richer context about all angles without needing to infer from one photo.
+  if (profileContext) {
+    prompt = `== PRE-COMPUTED PRODUCT PROFILE (from multi-angle analysis) ==
+${profileContext}
+Use the above as authoritative context for Steps 2, 2.5, and 3 (product identification,
+physical characteristics, and branding detection). You may still refine based on what you
+directly see in the image, but trust this profile for branding confidence and cross-angle
+details that may not be visible from this single angle. Focus your creative effort on
+Steps 4 and 5 (analysis and creative concept).
+
+== NOW ANALYZE THE IMAGE BELOW ==
+${prompt}`;
+  }
 
   const timeoutPromise = new Promise<never>((_, reject) =>
     setTimeout(() => reject(new Error('analyzeAndPlanV3 timed out after 60s')), 60_000)
