@@ -154,6 +154,56 @@ export async function onPaymentConfirmed(
 }
 
 // ---------------------------------------------------------------------------
+// Route a voice instruction to the correct style (or all styles if global)
+// ---------------------------------------------------------------------------
+
+function routeInstructionToStyle(
+  instruction: string,
+  styleId: string,
+): string | undefined {
+  if (!instruction) return undefined;
+
+  const lowerInstruction = instruction.toLowerCase();
+
+  // Style name mappings for detection
+  const styleKeywords: Record<string, string[]> = {
+    'style_clean_white': ['clean white', 'white background', 'safed', 'white'],
+    'style_studio': ['studio', 'colored studio', 'color studio', 'colour studio'],
+    'style_gradient': ['gradient', 'dark luxury', 'dark'],
+    'style_lifestyle': ['lifestyle', 'zindagi'],
+    'style_outdoor': ['outdoor', 'bahar', 'outside', 'nature'],
+    'style_festive': ['festive', 'festival', 'diwali', 'tyohar'],
+    'style_with_model': ['model', 'person', 'someone holding'],
+    'style_clickkar_special': ['special', 'clickkar special'],
+  };
+
+  // Check if the instruction mentions ANY specific style
+  let mentionsSpecificStyle = false;
+  let targetStyleId: string | null = null;
+
+  for (const [sid, keywords] of Object.entries(styleKeywords)) {
+    for (const kw of keywords) {
+      if (lowerInstruction.includes(kw)) {
+        mentionsSpecificStyle = true;
+        targetStyleId = sid;
+        break;
+      }
+    }
+    if (mentionsSpecificStyle) break;
+  }
+
+  // If instruction mentions a specific style:
+  // - Return the instruction only for that style
+  // - Return undefined for other styles
+  if (mentionsSpecificStyle && targetStyleId) {
+    return styleId === targetStyleId ? instruction : undefined;
+  }
+
+  // No specific style mentioned — apply to all (global instruction)
+  return instruction;
+}
+
+// ---------------------------------------------------------------------------
 // Enqueue image processing jobs (shared: used by payment confirmation + free trial)
 // ---------------------------------------------------------------------------
 
@@ -198,13 +248,15 @@ export async function enqueueImageJobs(
       },
     });
 
+    const styleInstruction = routeInstructionToStyle(voiceInstructions ?? '', styleId);
+
     await imageQueue.add('process_image', {
       orderId,
       imageJobId: imageJob.id,
       phoneNumber,
       inputImageUrl: primaryInputImageUrl,
       style: styleId,
-      voiceInstructions: voiceInstructions ?? undefined,
+      voiceInstructions: styleInstruction ?? undefined,
       productCategory: order.productCategory ?? undefined,
       pipeline: 'primary',
     });

@@ -353,6 +353,13 @@ RULES FOR APPLYING THIS INSTRUCTION:
 
     return `${getCameraSpec(params.style ?? 'style_lifestyle')}
 
+ABSOLUTE PRODUCT INTEGRITY RULES (NEVER VIOLATE):
+- The product in the output MUST be a pixel-perfect recreation of the input product. Same shape, same proportions, same colors, same opacity, same material finish.
+- EMPTY containers STAY EMPTY. If the bottle/jar/container has no visible liquid in the input photo, it MUST remain empty in the output. Do NOT add water, juice, liquid, or any colored substance inside.
+- Do NOT change the product's color under ANY circumstance. A dark grey bottle stays dark grey. A clear bottle stays clear. Lighting can affect perceived color slightly but the BASE color must match.
+- Do NOT add condensation, water droplets, frost, or moisture to the product surface unless clearly visible in the input photo.
+- Do NOT change the product's proportions. If the bottle is tall and slim, it stays tall and slim. Do not make it squatter, wider, or shorter.
+
 A photograph of a product advertisement. Edge-to-edge composition, no borders or frames. Exactly one product instance.${params.style !== 'style_with_model' ? ' No people, hands, or body parts anywhere.' : ''} The product from the input photo fills ${isSmall ? 'the majority of the frame in tight macro' : (isLifestyle || isOutdoor ? '40-50%' : fillPct + '%')} of the frame.
 ${userInstructionBlock}
 ${warningBlock}
@@ -360,11 +367,6 @@ ${validPlan.creativeBrief}
 ${heroDynamic}
 
 Product: ${productName}.${componentsList} ${colorEnforcement} Every logo, text, and brand mark preserved exactly as in the input photo.${!allowCondensation ? ' Product surface is completely dry — no water or condensation.' : ''}${!allowWaterEffects ? '\nNo water, liquid, splashes, droplets, or moisture anywhere in the scene. This product has nothing to do with water or liquids.' : ''}
-
-CRITICAL PRODUCT PRESERVATION:
-- Do NOT add liquid, water, juice, or any substance INSIDE the product that was not visible in the original photo. If the bottle or container was EMPTY in the input, it must remain EMPTY in the output.
-- Do NOT change the product's color, opacity, or transparency. A dark grey bottle must stay dark grey — do not make it clear, transparent, or lighter. A solid opaque container must not become semi-transparent.
-- Do NOT add condensation, water droplets, or frost to the product surface unless the user specifically requested it or the product is a cold beverage shown with condensation in the original photo.
 
 The product shows real material properties — packaging catches light with specular highlights, surfaces have micro-texture at full resolution. The product looks PHOTOGRAPHED, not rendered.${params.style === 'style_with_model' ? `
 
