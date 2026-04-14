@@ -25,6 +25,7 @@ const CombinedQASchema = z.object({
   physicallyPlausible: z.boolean(),
   humanAnatomy: z.enum(['no_person', 'natural', 'minor_issue', 'major_issue']),
   productIntegration: z.enum(['natural', 'awkward', 'impossible']),
+  sceneAppropriate: z.boolean().optional().default(true),
   issues: z.array(z.string()),
 });
 
@@ -109,8 +110,24 @@ BE HARSH HERE. Most AI outputs will have SOME fidelity issues — score them hon
 - "awkward": Product placement looks slightly off but still usable
 - "impossible": Product is floating, merged into person, or physically impossible — INSTANT FAIL
 
+## 9. SCENE APPROPRIATENESS
+Is the setting/scene contextually appropriate for this product type?
+Examples of contextually WRONG scenes (sceneAppropriate = false):
+- A protein bar or energy drink in a fine dining or restaurant setting
+- Chai/Indian tea in a Western coffee mug (should be in a kulhad, glass, or traditional cup)
+- Jewellery on a kitchen counter (should be on velvet, silk, or an aesthetic surface)
+- A candle that is unlit in a scene that implies it should be lit (birthday, romantic setting)
+- A face wash or skincare product in a gym locker room (should be in a bathroom/vanity)
+- Street food in a corporate boardroom
+Examples of contextually CORRECT scenes (sceneAppropriate = true):
+- Fitness supplement near gym equipment / outdoors / active setting
+- Skincare near a bathroom vanity, marble surface, or botanical props
+- Food product near its natural ingredients or in a kitchen/dining setting
+- Candle lit with warm ambient glow in a home/cozy setting
+If no obvious context mismatch exists, default sceneAppropriate = true.
+
 **Total score: fidelity(0-35) + scene(0-30) + plausibility(0-15) + readiness(0-20) = 0-100**
-**Pass: score >= 65 AND productFidelityScore >= 25 AND no random text AND no sketches AND no fundamental errors AND humanAnatomy != "major_issue" AND productIntegration != "impossible"**
+**Pass: score >= 65 AND productFidelityScore >= 25 AND no random text AND no sketches AND no fundamental errors AND humanAnatomy != "major_issue" AND productIntegration != "impossible" AND sceneAppropriate != false**
 
 Return valid JSON only:
 {
@@ -126,6 +143,7 @@ Return valid JSON only:
   "physicallyPlausible": boolean,
   "humanAnatomy": "no_person" | "natural" | "minor_issue" | "major_issue",
   "productIntegration": "natural" | "awkward" | "impossible",
+  "sceneAppropriate": boolean,
   "issues": string[]
 }`;
 
@@ -190,6 +208,19 @@ EXCEPTION: Photos/artwork of people PRINTED ON the product surface (photo mugs, 
 - "awkward": Product placement looks slightly off but still usable
 - "impossible": Product is floating, merged into person, or physically impossible
 
+## 9. SCENE APPROPRIATENESS
+Is the setting/scene contextually appropriate for this product type?
+Examples of contextually WRONG scenes (sceneAppropriate = false):
+- A protein bar or energy drink in a fine dining or restaurant setting
+- Chai/Indian tea in a Western coffee mug (should be in a kulhad, glass, or traditional cup)
+- Jewellery on a kitchen counter (should be on velvet, silk, or an aesthetic surface)
+- A candle that is unlit in a scene that implies it should be lit (birthday, romantic setting)
+- Street food in a corporate boardroom
+If no obvious context mismatch exists, default sceneAppropriate = true.
+
+**Total: scene(0-40) + plausibility(0-20) + human(0-20) + readiness(0-20) = 0-100**
+**Pass: score >= 65 AND no random text AND no sketches AND no fundamental errors AND humanAnatomy != "major_issue" AND productIntegration != "impossible" AND sceneAppropriate != false**
+
 Return valid JSON only:
 {
   "pass": boolean,
@@ -204,6 +235,7 @@ Return valid JSON only:
   "physicallyPlausible": boolean,
   "humanAnatomy": "no_person" | "natural" | "minor_issue" | "major_issue",
   "productIntegration": "natural" | "awkward" | "impossible",
+  "sceneAppropriate": boolean,
   "issues": string[]
 }`;
 
@@ -290,7 +322,8 @@ export async function combinedQualityCheck(
       !data.hasSketchesOrDrawings &&
       !data.hasFundamentalError &&
       data.humanAnatomy !== 'major_issue' &&
-      data.productIntegration !== 'impossible';
+      data.productIntegration !== 'impossible' &&
+      data.sceneAppropriate !== false;
 
     // Override the model's pass with server-computed pass
     data.pass = serverPass;
@@ -323,20 +356,21 @@ export async function combinedQualityCheck(
       }));
     }
 
-    // Fail conservative — assume bad quality so we try fallback
+    // Neutral score — avoid discarding good images due to QA timeout
     return {
       pass: false,
-      score: 40,
+      score: 55,
       hasRandomText: false,
       hasSketchesOrDrawings: false,
       hasFundamentalError: false,
       fundamentalErrorDescription: null,
       productFidelity: 'altered',
-      productFidelityScore: 10,
+      productFidelityScore: 20,
       sceneQuality: 'acceptable',
       physicallyPlausible: true,
       humanAnatomy: 'no_person',
       productIntegration: 'natural',
+      sceneAppropriate: true,
       issues: ['QA check failed — defaulting to conservative score'],
     };
   }

@@ -159,9 +159,23 @@ async function addChromaticAberration(imageBuffer: Buffer): Promise<Buffer> {
  * Badge scales proportionally with image size. No fixed pixel sizes.
  */
 export async function addAILabel(imageBuffer: Buffer): Promise<Buffer> {
-  const meta = await sharp(imageBuffer).metadata();
-  const w = meta.width ?? 1024;
-  const h = meta.height ?? 1024;
+  let workingBuffer = imageBuffer;
+
+  // Upscale to at least 1280px for better WhatsApp delivery quality
+  // WhatsApp compresses images — starting larger preserves more detail after compression
+  const metaCheck = await sharp(workingBuffer).metadata();
+  const wCheck = metaCheck.width ?? 1024;
+  const hCheck = metaCheck.height ?? 1024;
+  if (wCheck < 1280 && hCheck < 1280) {
+    const scale = Math.min(1280 / wCheck, 1280 / hCheck);
+    workingBuffer = await sharp(workingBuffer)
+      .resize(Math.round(wCheck * scale), Math.round(hCheck * scale), { kernel: 'lanczos3' })
+      .toBuffer();
+  }
+
+  const meta = await sharp(workingBuffer).metadata();
+  const w = meta.width ?? 1280;
+  const h = meta.height ?? 1280;
 
   // --- Step 1: Bottom gradient scrim for consistent legibility ---
   // Subtle darkening across the full width at the bottom — ensures the white logo
@@ -207,7 +221,7 @@ export async function addAILabel(imageBuffer: Buffer): Promise<Buffer> {
   // --- Step 3: Composite both layers ---
   const margin = Math.max(10, Math.round(w * 0.012));
 
-  return sharp(imageBuffer)
+  return sharp(workingBuffer)
     .composite([
       // Scrim first (behind the badge)
       { input: scrimPng, left: 0, top: h - scrimHeight, blend: 'over' },

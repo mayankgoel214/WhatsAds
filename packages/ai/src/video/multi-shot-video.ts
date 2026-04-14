@@ -7,7 +7,7 @@ import { writeFile, readFile, unlink } from 'fs/promises';
 import { randomUUID } from 'crypto';
 
 import { downloadBuffer, uploadToStorage } from '../pipeline/fallback.js';
-import { generateSilentTrack } from './music.js';
+import { generateVeoVideo } from './veo-video.js';
 
 function ensureFalConfig() {
   const key = process.env['FAL_KEY'] ?? process.env['FAL_API_KEY'] ?? '';
@@ -39,19 +39,25 @@ export interface MultiShotVideoResult {
 // Do NOT redescribe the scene/image content — the model already sees the frame.
 // ---------------------------------------------------------------------------
 
-const MOTION_PROMPTS: Record<string, string> = {
-  style_clean_white: 'Very subtle slow push-in. Faint light reflections shift across product surface. Minimal, elegant movement. Background remains perfectly still.',
-  style_studio: 'Gentle camera drift to the right. Studio lights create subtle moving highlights on product surface. Smooth, professional pace.',
-  style_gradient: 'Slow dramatic push-in. Rim light intensifies slightly. Subtle particle motes drift through scene. Cinematic, moody atmosphere.',
-  style_lifestyle: 'Natural ambient motion — leaves gently sway, light dapples shift. Product stays anchored. Warm, lived-in feel.',
-  style_outdoor: 'Gentle breeze moves environmental elements. Sunlight shifts subtly. Natural, organic feel. Product is the steady anchor.',
-  style_festive: 'Warm flickering light creates gentle shadows. Subtle sparkle effects. Festive, celebratory ambient motion.',
-  style_with_model: 'Person subtly shifts weight, natural breathing motion. Eyes engage camera. Product held steady. Cinematic portrait feel.',
-  style_clickkar_special: 'Cinematic slow push-in with subtle parallax depth. Light sweeps dramatically across product. Bold, premium motion.',
-  style_video_shoot: 'Cinematic slow push-in with dramatic lighting shift. Product catches new highlights as camera moves. Professional ad motion.',
+const CATEGORY_MOTION_OVERRIDES: Record<string, string> = {
+  jewellery: 'Very slow, elegant camera drift. Gentle light sweep across diamonds creating subtle sparkle points. Minimal camera movement — let the jewelry be the star. Luxury commercial pace. No morphing, no distortion, photorealistic.',
+  food: 'Appetizing slow push-in. Warm lighting shifts across textures. Steam or ambient warmth visible. Mouth-watering commercial pace. No morphing, no distortion, photorealistic.',
+  skincare: 'Serene, slow camera glide. Soft diffused lighting shifts. Dewy, fresh atmosphere. Premium beauty commercial pace. No morphing, no distortion, photorealistic.',
 };
 
-const DEFAULT_MOTION = 'Gentle camera push-in. Subtle light reflections shift across surfaces. Smooth, professional motion. No morphing or distortion.';
+const MOTION_PROMPTS: Record<string, string> = {
+  style_clean_white: 'Smooth cinematic orbit around the product. Camera glides revealing different angles. Clean studio lighting creates moving highlights across surfaces. Premium commercial quality. No morphing, no distortion, photorealistic.',
+  style_studio: 'Dramatic slow dolly push-in. Studio lights sweep creating bold rim lighting that intensifies. Volumetric light beams shift across colored backdrop. High-end commercial. No morphing, no distortion, photorealistic.',
+  style_gradient: 'Cinematic crane shot descending toward product. Dramatic rim lighting pulses from warm amber to cool blue. Atmospheric particles drift through volumetric light. Dark luxury commercial. No morphing, no distortion, photorealistic.',
+  style_lifestyle: 'Gentle handheld camera drift. Warm sunlight shifts creating moving dappled shadows. Ambient life elements sway naturally. Editorial lifestyle commercial. No morphing, no distortion, photorealistic.',
+  style_outdoor: 'Smooth steadicam movement through scene. Golden hour light shifts dramatically. Wind moves natural elements around static product. Cinematic nature feel. No morphing, no distortion, photorealistic.',
+  style_festive: 'Warm camera push-in with flickering light creating dancing shadows. Golden sparkles shimmer. Festive atmosphere with ambient motion. Premium Indian commercial. No morphing, no distortion, photorealistic.',
+  style_with_model: 'Cinematic portrait movement. Person naturally shifts gaze and expression. Shallow depth of field creates drifting bokeh. Editorial fashion photography in motion. No morphing, no distortion, photorealistic.',
+  style_clickkar_special: 'Bold cinematic camera orbit with dramatic parallax depth. Volumetric lighting sweeps creating moving specular highlights. Particles drift through light beams. Award-winning commercial cinematography. No morphing, no distortion, photorealistic.',
+  style_video_shoot: 'Bold cinematic camera orbit with dramatic parallax depth. Volumetric lighting sweeps across product creating moving specular highlights and reflections. Premium product advertisement with bold motion and energy. Award-winning commercial cinematography. No morphing, no distortion, photorealistic.',
+};
+
+const DEFAULT_MOTION = 'Cinematic slow orbit around product. Dramatic lighting shifts create moving highlights. Premium commercial feel. No morphing, no distortion, photorealistic.';
 
 // ---------------------------------------------------------------------------
 // Main export
@@ -62,7 +68,7 @@ const DEFAULT_MOTION = 'Gentle camera push-in. Subtle light reflections shift ac
  *
  * Architecture:
  * 1. Animate the hero image with i2v (motion-only prompt — NOT redescribing scene)
- *    Fallback chain: LTX-2.3 Fast → Kling 2.1 → Ken Burns (always works)
+ *    Fallback chain: Kling 3.0 Standard → Kling 2.1 → LTX-2.3 Fast → Ken Burns (always works)
  * 2. Generate a text-overlay outro from the same image (Ken Burns zoom-out + FFmpeg drawtext)
  * 3. Assemble: animated clip (5s) + outro clip (3s) with optional background music
  *
@@ -99,8 +105,10 @@ export async function generateMultiShotVideo(
   const hero916 = await convertTo916(heroBuffer, 720, 1280);
 
   // ===== Step 1: Animate the hero image with i2v =====
-  const motionPrompt = MOTION_PROMPTS[style] ?? DEFAULT_MOTION;
-  const animatedClip = await animateImage(hero916, motionPrompt, 5);
+  const categoryOverride = CATEGORY_MOTION_OVERRIDES[category];
+  const motionPrompt = categoryOverride ?? MOTION_PROMPTS[style] ?? DEFAULT_MOTION;
+  const clipDuration = (style === 'style_video_shoot') ? 10 : 5;
+  const animatedClip = await animateImage(hero916, motionPrompt, clipDuration);
 
   console.info(JSON.stringify({
     event: 'video_ad_v2_animated_clip_complete',
@@ -111,7 +119,8 @@ export async function generateMultiShotVideo(
   // ===== Step 2: Generate outro with text overlay (non-fatal) =====
   let outroClip: Buffer | null = null;
   try {
-    outroClip = await generateOutroClip(hero916, productName, lang, 3);
+    const outroDuration = 3;
+    outroClip = await generateOutroClip(hero916, productName, lang, outroDuration);
   } catch (err) {
     console.warn(JSON.stringify({
       event: 'outro_clip_failed_using_animated_only',
@@ -124,11 +133,21 @@ export async function generateMultiShotVideo(
   let finalVideo: Buffer;
   if (outroClip) {
     // Full assembly: animated clip + outro
-    const musicTrack = await generateSilentTrack(10).catch(() => undefined);
-    finalVideo = await assembleVideoV2(animatedClip, outroClip, musicTrack);
+    // Kling 3.0 provides native audio — assembleVideoV2 passes through clip audio directly.
+    finalVideo = await assembleVideoV2(animatedClip, outroClip);
   } else {
     // Outro failed — deliver the animated clip directly without re-encoding
     finalVideo = animatedClip;
+  }
+
+  // Check video size — WhatsApp rejects files >16MB
+  const MAX_WHATSAPP_VIDEO_BYTES = 15 * 1024 * 1024; // 15MB safety margin
+  if (finalVideo.length > MAX_WHATSAPP_VIDEO_BYTES) {
+    console.warn(JSON.stringify({
+      event: 'video_too_large_recompressing',
+      originalSizeMB: (finalVideo.length / 1024 / 1024).toFixed(2),
+    }));
+    finalVideo = await recompressVideo(finalVideo, MAX_WHATSAPP_VIDEO_BYTES);
   }
 
   const durationMs = Date.now() - startMs;
@@ -196,76 +215,81 @@ async function convertTo916(buffer: Buffer, width: number, height: number): Prom
 // ---- Animate with i2v (3-tier fallback) ----
 
 async function animateImage(frameBuffer: Buffer, prompt: string, durationSec: number): Promise<Buffer> {
-  // Upload frame to get a public URL for the API
-  const frameUrl = await uploadToStorage(frameBuffer, `tmp_video_frame_${Date.now()}.jpg`, 'image/jpeg');
-
-  // Tier 1: LTX-2.3 Fast (cheapest, fastest — ~15-25s, ~$0.20)
+  // Tier 1: Veo 3.1 Lite via Gemini API (takes raw bytes — no public URL needed)
   try {
-    console.info(JSON.stringify({ event: 'i2v_start', model: 'ltx-2.3-fast', durationSec }));
+    console.info(JSON.stringify({ event: 'i2v_start', model: 'veo-3.1-lite', durationSec }));
 
-    const result = await Promise.race([
-      fal.subscribe('fal-ai/ltx-video/v0.9.7/image-to-video', {
-        input: {
-          prompt: `${prompt} No morphing, no distortion, no text changes.`,
-          image_url: frameUrl,
-          num_frames: durationSec * 24,
-          fps: 24,
-          aspect_ratio: '9:16',
-        },
-        logs: false,
-      }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('LTX-2.3 timed out after 60s')), 60_000),
-      ),
-    ]) as any;
+    const veoResult = await generateVeoVideo({
+      imageBuffer: frameBuffer,
+      prompt: `${prompt} No morphing, no distortion, photorealistic.`,
+      durationSeconds: durationSec <= 5 ? 5 : 8,
+      aspectRatio: '9:16',
+      resolution: '720p',
+      // generateAudio not supported in current Gemini API — videos are silent
+    });
 
-    const videoUrl = result?.data?.video?.url ?? result?.video?.url;
-    if (videoUrl) {
-      const videoBuffer = await downloadBuffer(videoUrl);
-      console.info(JSON.stringify({ event: 'i2v_complete', model: 'ltx-2.3-fast', sizeBytes: videoBuffer.length }));
-      return videoBuffer;
+    if (veoResult) {
+      console.info(JSON.stringify({
+        event: 'i2v_complete',
+        model: 'veo-3.1-lite',
+        sizeBytes: veoResult.videoBuffer.length,
+      }));
+      return veoResult.videoBuffer;
     }
-    throw new Error('No video URL in LTX response');
   } catch (err) {
     console.warn(JSON.stringify({
-      event: 'i2v_ltx_failed',
+      event: 'i2v_veo_failed',
       error: err instanceof Error ? err.message : String(err),
     }));
   }
 
-  // Tier 2: Kling 2.1 Standard (better quality, slower — ~60-120s)
+  // Tier 2: LTX-2.3 Fast (fal.ai — requires public URL)
+  let frameUrl: string | null = null;
   try {
-    console.info(JSON.stringify({ event: 'i2v_start', model: 'kling-2.1', durationSec }));
-
-    const result = await Promise.race([
-      fal.subscribe('fal-ai/kling-video/v2.1/standard/image-to-video', {
-        input: {
-          prompt: `${prompt} No morphing, no distortion.`,
-          image_url: frameUrl,
-          duration: '5',
-        },
-        logs: false,
-      }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Kling timed out after 120s')), 120_000),
-      ),
-    ]) as any;
-
-    const videoUrl = result?.data?.video?.url ?? result?.video?.url ?? result?.data?.videos?.[0]?.url;
-    if (videoUrl) {
-      const videoBuffer = await downloadBuffer(videoUrl);
-      console.info(JSON.stringify({ event: 'i2v_complete', model: 'kling-2.1', sizeBytes: videoBuffer.length }));
-      return videoBuffer;
-    }
-    throw new Error('No video URL in Kling response');
-  } catch (err) {
+    frameUrl = await uploadToStorage(frameBuffer, `tmp_video_frame_${Date.now()}.jpg`, 'image/jpeg');
+  } catch (uploadErr) {
     console.warn(JSON.stringify({
-      event: 'i2v_kling_failed',
-      error: err instanceof Error ? err.message : String(err),
+      event: 'i2v_ltx_upload_failed',
+      error: uploadErr instanceof Error ? uploadErr.message : String(uploadErr),
     }));
   }
 
-  // Tier 3: Ken Burns (free, always works)
+  if (frameUrl) {
+    try {
+      console.info(JSON.stringify({ event: 'i2v_start', model: 'ltx-2.3-fast', durationSec }));
+
+      const result = await Promise.race([
+        fal.subscribe('fal-ai/ltx-video/v0.9.7/image-to-video', {
+          input: {
+            prompt,
+            image_url: frameUrl,
+            num_frames: durationSec * 24,
+            fps: 24,
+            aspect_ratio: '9:16',
+          },
+          logs: false,
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('LTX-2.3 timed out after 60s')), 60_000),
+        ),
+      ]) as any;
+
+      const videoUrl = result?.data?.video?.url ?? result?.video?.url;
+      if (videoUrl) {
+        const videoBuffer = await downloadBuffer(videoUrl);
+        console.info(JSON.stringify({ event: 'i2v_complete', model: 'ltx-2.3-fast', sizeBytes: videoBuffer.length }));
+        return videoBuffer;
+      }
+      throw new Error('No video URL in LTX response');
+    } catch (err) {
+      console.warn(JSON.stringify({
+        event: 'i2v_ltx_failed',
+        error: err instanceof Error ? err.message : String(err),
+      }));
+    }
+  }
+
+  // Tier 3: Ken Burns (FFmpeg — always works, zero API cost)
   console.info(JSON.stringify({ event: 'i2v_fallback_ken_burns' }));
   return generateKenBurnsClip(frameBuffer, durationSec, 'zoom_in');
 }
@@ -390,12 +414,49 @@ async function generateKenBurnsClip(
   });
 }
 
+// ---- Recompress video to fit within WhatsApp 16MB limit ----
+
+async function recompressVideo(videoBuffer: Buffer, _maxBytes: number): Promise<Buffer> {
+  const id = randomUUID().slice(0, 8);
+  const tmpDir = tmpdir();
+  const inputPath = join(tmpDir, `recomp_in_${id}.mp4`);
+  const outputPath = join(tmpDir, `recomp_out_${id}.mp4`);
+
+  await writeFile(inputPath, videoBuffer);
+
+  return new Promise<Buffer>((resolve, reject) => {
+    ffmpeg(inputPath)
+      .outputOptions([
+        '-c:v', 'libx264', '-preset', 'fast', '-crf', '28',
+        '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+        '-maxrate', '1500k', '-bufsize', '3000k',
+        '-c:a', 'aac', '-b:a', '96k',
+        '-shortest',
+      ])
+      .output(outputPath)
+      .on('end', async () => {
+        try {
+          const buf = await readFile(outputPath);
+          await unlink(inputPath).catch(() => {});
+          await unlink(outputPath).catch(() => {});
+          resolve(buf);
+        } catch (e) { reject(e); }
+      })
+      .on('error', (err) => {
+        unlink(inputPath).catch(() => {});
+        unlink(outputPath).catch(() => {});
+        reject(new Error(`recompressVideo FFmpeg error: ${err.message}`));
+      })
+      .run();
+  });
+}
+
 // ---- Assemble final video (animated clip + outro, optional music) ----
 
 async function assembleVideoV2(
   mainClip: Buffer,
   outroClip: Buffer,
-  musicTrack?: Buffer,
+  _musicTrack?: Buffer,
 ): Promise<Buffer> {
   const id = randomUUID().slice(0, 8);
   const tmpDir = tmpdir();
@@ -409,42 +470,30 @@ async function assembleVideoV2(
   await writeFile(outroPath, outroClip);
   await writeFile(concatPath, `file '${mainPath}'\nfile '${outroPath}'`);
 
-  let musicPath: string | null = null;
-  if (musicTrack && musicTrack.length > 0) {
-    musicPath = join(tmpDir, `v2_music_${id}.aac`);
-    await writeFile(musicPath, musicTrack);
-  }
-
   const cleanup = () =>
     Promise.all([
       unlink(mainPath).catch(() => {}),
       unlink(outroPath).catch(() => {}),
       unlink(concatPath).catch(() => {}),
       unlink(outputPath).catch(() => {}),
-      musicPath ? unlink(musicPath).catch(() => {}) : Promise.resolve(),
     ]);
 
   return new Promise<Buffer>((resolve, reject) => {
-    let cmd = ffmpeg()
+    const cmd = ffmpeg()
       .input(concatPath)
       .inputOptions(['-f', 'concat', '-safe', '0']);
 
-    if (musicPath) {
-      cmd = cmd.input(musicPath);
-    }
-
+    // Always try to include audio from input clips.
+    // Kling 3.0 generates native audio — this preserves it.
+    // Ken Burns clips have no audio stream; FFmpeg will produce silent output (fine).
     const outputOptions = [
-      '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+      '-c:v', 'libx264', '-preset', 'fast', '-crf', '20',
       '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
       '-r', '24', '-s', '720x1280',
-      '-maxrate', '2000k', '-bufsize', '4000k',
+      '-maxrate', '4000k', '-bufsize', '8000k',
+      '-c:a', 'aac', '-b:a', '128k',  // Always try to include audio
+      '-shortest',
     ];
-
-    if (musicPath) {
-      outputOptions.push('-c:a', 'aac', '-b:a', '128k', '-shortest');
-    } else {
-      outputOptions.push('-an');
-    }
 
     cmd
       .outputOptions(outputOptions)

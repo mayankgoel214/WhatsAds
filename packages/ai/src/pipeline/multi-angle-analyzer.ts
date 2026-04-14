@@ -135,12 +135,16 @@ Your response MUST be valid JSON only — no markdown, no explanation, no code f
 == YOUR TASKS ==
 
 ### Task 1: Choose the best primary image
-Examine all ${imageCount} image${imageCount > 1 ? 's' : ''} and identify which one is the BEST primary photo. The best primary image is:
-- Sharpest and best-lit
-- Most front-facing or label-forward
-- Shows the most branding (logo, text, label)
-- Has the clearest representation of the product's main face
-- Has the least clutter, glare, or obstruction
+Examine all ${imageCount} image${imageCount > 1 ? 's' : ''} and identify which one is the BEST primary photo.
+
+STRICT PRIORITY ORDER — work top to bottom:
+
+1. FRONT/DISPLAY FACE (HIGHEST PRIORITY): Pick the image showing the FRONT of the product — the branded face, logo side, display label, the side that faces customers in a store. A nutrition facts panel, ingredient list, barcode, or back label is ALWAYS the BACK — never select it as primary.
+2. MOST BRANDING VISIBLE: Among front-facing images, prefer the one with the most visible brand name, logo, key text.
+3. BEST LIGHTING: Among equally-branded images, prefer sharper, better-lit.
+4. LEAST CLUTTER: Final tiebreaker — less background clutter.
+
+The front/branding face ALWAYS wins over better lighting of the back.
 
 Return "primaryImageIndex" as a 0-indexed integer (0 = first image, 1 = second image, etc.).
 Return "primaryImageReason" explaining briefly why this image was chosen.
@@ -190,6 +194,44 @@ For each of the ${imageCount} image${imageCount > 1 ? 's' : ''} (indexed 0 to ${
 ### Task 8: Usability
 - "usable": false ONLY if no product is visible in ANY of the images, or ALL images are severely corrupted. Accept poor lighting, messy backgrounds, or suboptimal angles — at least one angle is usually usable.
 - "rejectionReason": Explanation if usable is false, otherwise null.
+
+### Task 9: Indian Market Intelligence (CRITICAL — prevents cultural mistakes)
+You are generating ads for INDIAN small business sellers. Use information from Tasks 2–4 to flag any Indian cultural context constraints that MUST be respected in the scene. Factor these into crossAngleInsights and desiredEmotion.
+
+FOOD & BEVERAGE RULES:
+- CHAI: Serve in kulhad (clay cup) or cutting chai glass. NEVER in a Western coffee mug. Steam is REQUIRED.
+- FILTER COFFEE: Serve in davara-tumbler (South Indian steel set). NOT in a paper cup or mug.
+- LASSI: Serve in tall steel glass or earthen glass. NOT in a cocktail glass.
+- MITHAI/SWEETS (ladoo, barfi, halwa): Serve on brass or steel thali. NEVER on a Western ceramic plate with fork. Scatter marigold petals, not roses. Show diyas, not candles.
+- PACKAGED SNACKS (chips, biscuits, protein bars): Eaten BY HAND from the wrapper/packet. NEVER on a plate with cutlery. Setting: gym, office, on-the-go. NOT formal dining.
+- SPICES/MASALAS: These are INGREDIENTS, not food to eat. Show with whole spices scattered, mortar-pestle, kitchen setting. NEVER plated as a meal.
+
+JEWELLERY RULES:
+- NECKLACES: Must be on a velvet bust/stand, on a neck, or draped on silk fabric. NEVER lying flat on a desk.
+- TEMPLE/TRADITIONAL jewellery: Indian setting (silk, diyas, brass). NEVER Western luxury (champagne, roses).
+- BANGLES: Always shown in SETS (never single). On a bangle stand or wrist with mehendi.
+- EARRINGS: Always shown as a PAIR. On an earring stand or worn.
+- NO water/condensation on jewellery EVER.
+
+GARMENT RULES:
+- SAREES: MUST be draped/on mannequin. NEVER shown folded flat. Pallu and border must be visible.
+- KURTIS: On body or hanger, showing the cut and fit.
+
+HOME GOODS RULES:
+- CANDLES: MUST be shown LIT. Flame is the product's hero element. Indoor evening setting.
+- DEITY FIGURINES: Absolute reverence. Pooja room/altar ONLY. NEVER near food/beverages or in casual settings.
+
+UNIVERSAL ANTI-PATTERNS (NEVER DO THESE):
+1. Fork and knife with Indian food that is eaten by hand
+2. Steam on room-temperature food (protein bars, biscuits, packaged snacks)
+3. Ice/condensation on non-cold products
+4. Chai in a coffee mug
+5. Single bangle (always sets), single earring (always pairs)
+6. Saree shown folded flat
+7. Unlit candle
+8. Deity items in casual/disrespectful settings
+9. Homemade/artisanal products in sterile clinical settings
+10. Water/moisture on jewellery, electronics, or paper products
 ${styleHint}
 `;
 

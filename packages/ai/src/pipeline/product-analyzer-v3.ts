@@ -40,6 +40,18 @@ const ProductAnalysisSchema = z.object({
     return valid.includes(v as any) ? v as typeof valid[number] : 'other';
   }),
   adBestPractices: z.string(),
+
+  // --- PRODUCT USAGE CONTEXT ---
+  servingTemperature: z.string().transform(v => {
+    const valid = ['hot', 'cold', 'room_temperature', 'frozen', 'not_applicable'] as const;
+    return valid.includes(v as any) ? v as typeof valid[number] : 'not_applicable';
+  }).catch('not_applicable'),
+  consumptionMethod: z.string().catch('not_applicable'),
+  typicalSetting: z.string().catch('not_applicable'),
+  servingVessel: z.string().catch('not_applicable'),
+  utensils: z.string().catch('not_applicable'),
+  usageOccasion: z.string().catch('not_applicable'),
+  productState: z.string().catch('sealed'),
 });
 
 const AnalyzeAndPlanV3Schema = z.object({
@@ -84,6 +96,7 @@ const AnalyzeAndPlanV3Schema = z.object({
   // --- V3 CREATIVE CONCEPT FIELDS (NEW) ---
 
   isColdBeverage: z.boolean().catch(false),
+  isTransparent: z.boolean().catch(false),
 
   heroMoment: z.string(),
   dynamicElements: z.union([z.array(z.string()), z.string()]).transform(v => Array.isArray(v) ? v : [v]),
@@ -489,6 +502,7 @@ Do NOT override this style based on product type. The user chose this style expl
 Full brand name, product type, variant, size. NOT "speaker" but "Anker SoundCore 2 Portable Bluetooth Speaker, black mesh front, ANKER logo on face."
 - productComponents: List EVERY visible physical sub-component of the product (cap, lid, straw, cable, stand, box, tag, applicator, tube, wrapper). Be exhaustive — if you can see it, list it.
 - "isColdBeverage": Set to true if the product is ANY beverage that is served cold or at room temperature — this includes energy drink cans, soda cans, cola, sparkling water, juice bottles, water bottles, beer cans/bottles, sports drinks, iced tea, cold coffee cans, kombucha. Set to false for all non-beverages and for hot beverages (coffee sachets, tea bags, instant mixes meant to be made hot). When in doubt about whether it is a cold beverage, set to true.
+- "isTransparent": true if the product is made of transparent or semi-transparent material (glass bottles, clear plastic containers, glass candle holders, acrylic items). false for all opaque products.
 
 ## STEP 2.5: Physical Characteristics
 - "productPhysicalSize": "tiny" (palm-sized) | "small" (hand-sized) | "medium" (forearm-sized) | "large" (bigger)
@@ -598,6 +612,83 @@ If this product is a cold beverage (isColdBeverage = true), ALL of the following
   * Skincare: Water/dew is OK only if the product is water-based. Otherwise use: flower petals, product texture, soft glow.
   * Food/Beverage: Water, ice, splashes, condensation are all OK and encouraged.
 
+## STEP 6: PRODUCT USAGE CONTEXT (CRITICAL FOR AD ACCURACY)
+Determine HOW this product is actually used in real life. This prevents embarrassing creative mistakes like putting a protein bar on a fine dining plate with cutlery, or showing steam rising from an ice cream.
+
+For FOOD/BEVERAGE products:
+- "servingTemperature": Is it eaten/drunk hot, cold, room temperature, or frozen? A protein bar = room_temperature. Coffee = hot. Ice cream = frozen. Energy drink = cold. A sachet of instant mix = hot (it becomes a hot drink).
+- "consumptionMethod": HOW is it physically consumed? "eaten by hand from wrapper" vs "eaten with fork on plate" vs "drunk from can" vs "applied with spoon from bowl"
+- "typicalSetting": WHERE is this product typically consumed? A protein bar = "gym, office, hiking trail, car". Fine dining dessert = "restaurant table". Energy drink = "gym, outdoor, office desk". Instant noodles = "kitchen or office with bowl and chopsticks/fork".
+- "servingVessel": What container is it served in or eaten from? A protein bar = "none, eaten from wrapper". Soup = "bowl". Chips = "bag or bowl". Ice cream tub = "tub with spoon".
+- "utensils": What do you use to eat/drink it? A protein bar = "hands only". Steak = "fork and knife". Smoothie = "straw". Soup = "spoon". Most chips/snacks = "hands only".
+- "usageOccasion": When/why is it consumed? "post-workout snack", "quick office lunch", "late-night indulgence", "morning energy boost".
+- "productState": Determine the state the product should be shown in for advertising. A SEALED packaged product (protein bar in wrapper, chips in bag, drink in can) should ALWAYS be shown SEALED and INTACT — never opened, unwrapped, poured, or broken. The packaging IS the product. Only show the product opened/in-use if it is an UNPACKAGED product (jewellery, clothing, electronics) or if the user explicitly requests it. Values: "sealed" (for packaged products that should remain closed), "open" (for products shown in use, like cream applied to skin), "not_applicable" (for products without packaging like bangles, raw food ingredients).
+
+For NON-FOOD products (jewellery, skincare, garments, electronics, bags, candles, etc.):
+- Set servingTemperature to "not_applicable"
+- consumptionMethod = how is it used? "worn around neck", "applied to face with fingertips", "held in hand while commuting", "sprayed on wrist"
+- typicalSetting = where is it used? "vanity table getting ready", "gym locker room", "office desk", "wedding ceremony"
+- servingVessel = "not_applicable" for all non-food
+- utensils = "not_applicable" for all non-food
+- usageOccasion = "wedding preparation", "daily morning skincare routine", "post-workout recovery", "casual daily wear"
+
+CRITICAL MISTAKES THIS PREVENTS:
+- A protein bar on a china plate with fork and knife (it's eaten from the wrapper by hand)
+- Steam rising from an energy drink or ice cream (both are cold/room temperature)
+- A gym protein bar in a formal restaurant setting (it belongs in a gym or outdoors)
+- Chopsticks next to a product that is eaten by hand
+- A formal dinner table setting for a product sold at roadside stalls
+- A bowl for a product that comes in its own container and is eaten directly
+
+## STEP 7: INDIAN MARKET INTELLIGENCE (CRITICAL — prevents cultural mistakes)
+
+You are generating ads for INDIAN small business sellers. Indian products have SPECIFIC cultural contexts that MUST be respected:
+
+### FOOD & BEVERAGE RULES:
+- CHAI: Serve in kulhad (clay cup) or cutting chai glass. NEVER in a Western coffee mug. Steam is REQUIRED. Pair with Parle-G biscuit for authentic feel.
+- FILTER COFFEE: Serve in davara-tumbler (South Indian steel set). NOT in a paper cup or mug.
+- LASSI: Serve in tall steel glass or earthen glass. NOT in a cocktail glass.
+- MITHAI/SWEETS (ladoo, barfi, halwa): Serve on brass or steel thali. NEVER on a Western ceramic plate with fork. Scatter marigold petals, not roses. Show diyas, not candles.
+- PACKAGED SNACKS (chips, biscuits, protein bars): Eaten BY HAND from the wrapper/packet. NEVER on a plate with cutlery. Setting: gym, office, on-the-go. NOT formal dining.
+- SPICES/MASALAS: These are INGREDIENTS, not food to eat. Show with whole spices scattered, mortar-pestle, kitchen setting. NEVER plated as a meal.
+- PICKLES/CHUTNEYS: Show in jar with pairing food nearby (papad, bread, rice). Rustic, homemade aesthetic.
+- HONEY: Room temperature. The honey-drip from a wooden dipper is the classic shot. Rustic/natural setting.
+
+### JEWELLERY RULES:
+- NECKLACES: Must be on a velvet bust/stand, on a neck, or draped on silk fabric. NEVER lying flat on a desk.
+- TEMPLE/TRADITIONAL jewellery: Indian setting (silk, diyas, brass). NEVER Western luxury (champagne, roses).
+- BANGLES: Always shown in SETS (never single). On a bangle stand or wrist with mehendi.
+- EARRINGS: Always shown as a PAIR. On an earring stand or worn.
+- NO water/condensation on jewellery EVER.
+
+### GARMENT RULES:
+- SAREES: MUST be draped/on mannequin. NEVER shown folded flat. Pallu and border must be visible.
+- KURTIS: On body or hanger, showing the cut and fit.
+- JUTTIS/KOLHAPURIS: Rustic Indian setting. NOT Western shoe store.
+
+### SKINCARE RULES:
+- AYURVEDIC products: Rustic, natural setting (herbs, clay, wood). NOT clinical/sterile.
+- Modern serums: Clean bathroom/vanity setting.
+- HAIR OIL: Warm Indian home setting. Traditional champi context.
+
+### HOME GOODS RULES:
+- CANDLES: MUST be shown LIT. Flame is the product's hero element. Indoor evening setting.
+- DEITY FIGURINES: Absolute reverence. Pooja room/altar ONLY. NEVER near food/beverages or in casual settings.
+- CUPS/MUGS: Show WITH beverage inside. Kulhad = chai only. Mug = coffee.
+- WALL ART: On a wall in a room. NEVER flat on a table.
+
+### UNIVERSAL ANTI-PATTERNS (NEVER DO THESE):
+1. Fork and knife with Indian food that is eaten by hand
+2. Steam on room-temperature food (protein bars, biscuits, packaged snacks)
+3. Ice/condensation on non-cold products
+4. Chai in a coffee mug (Indian market context)
+5. Single bangle (always sets), single earring (always pairs)
+6. Saree shown folded flat
+7. Unlit candle
+8. Deity items in casual/disrespectful settings
+9. Homemade/artisanal products in sterile clinical settings
+10. Water/moisture on jewellery, electronics, or paper products
+
 CRITICAL CONSTRAINT FOR CREATIVE BRIEF: The creative brief must NEVER describe the product differently from how it appears in the input photo. Do not invent details, simplify the product, or change its design. The brief should describe the SCENE and ENVIRONMENT around the product, not redesign the product itself. Every physical detail of the product (shape, color, material, components, text) must remain exactly as photographed.
 - CONDENSATION/WATER DROPLETS: Only add condensation, water droplets, or dewy surfaces if the product is a BEVERAGE CONTAINER (bottle, tumbler, can, glass) or a FOOD/DRINK product. For ALL other product categories (jewellery, electronics, candles, bags, garments, skincare, home decor), the product surface must remain DRY. Do not add water droplets to products that would never be wet in real life.
 - EXACTLY ONE product in the image — NEVER duplicate or clone
@@ -681,9 +772,17 @@ Integrate this into your creative concept for the chosen style. IMPORTANT RULES:
       "photographyStyle": string
     },
     "category": "food" | "jewellery" | "garment" | "skincare" | "candle" | "bag" | "home_goods" | "electronics" | "handicraft" | "other",
-    "adBestPractices": string
+    "adBestPractices": string,
+    "servingTemperature": "hot" | "cold" | "room_temperature" | "frozen" | "not_applicable",
+    "consumptionMethod": string,
+    "typicalSetting": string,
+    "servingVessel": string,
+    "utensils": string,
+    "usageOccasion": string,
+    "productState": "sealed" | "open" | "not_applicable"
   },
   "isColdBeverage": boolean,
+  "isTransparent": boolean,
   "scenePrompt": string,
   "backgroundOnlyPrompt": string,
   "heroMoment": string,

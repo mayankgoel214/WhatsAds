@@ -167,3 +167,16 @@ export {
   type MultiShotVideoOptions,
   type MultiShotVideoResult,
 } from './video/multi-shot-video.js';
+
+export {
+  generateVeoVideo,
+  type VeoVideoOptions,
+  type VeoVideoResult,
+} from './video/veo-video.js';
+
+export {
+  generateLyriaMusic,
+  getLyriaPrompt,
+  type LyriaMusicOptions,
+  type LyriaMusicResult,
+} from './video/lyria-music.js';

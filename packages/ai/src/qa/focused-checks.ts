@@ -78,6 +78,8 @@ async function checkProductCount(
 
 Count EACH separate instance — if you see 2 copies of the same product, answer 2. If there is one product shown from one angle, answer 1. Do NOT count reflections on polished/acrylic/glass surfaces as separate products — those are reflections, not duplicates. Do NOT count shadows as separate instances.
 
+EXCEPTION: If the product is inherently a PAIR (earrings, shoes, socks, gloves, cufflinks) or a SET (bangles, necklace+earring set), the correct count is the number of pieces in the set. A pair of earrings = count 2 is CORRECT, not a duplication.
+
 Reply with ONLY a single number (e.g., "1" or "2"). Nothing else.`;
 
   const raw = await askBinaryQuestion(client, outputBuffer, prompt);
@@ -225,7 +227,8 @@ Be strict: if an earring's shape changed from elongated drop to compact stud, th
       missingComponents: parsed.missingComponents ?? 'none',
     };
   } catch {
-    return { allComponentsPresent: true, missingComponents: 'check failed' }; // default pass on failure
+    // Component check timeout or parse error — uncertain, let combined QA decide
+    return { allComponentsPresent: true, missingComponents: 'check timed out — relying on combined QA' };
   }
 }
 
@@ -299,7 +302,7 @@ export async function runFocusedChecks(
     withTimeout(
       checkComponentAccuracy(inputBuffer, outputBuffer),
       TIMEOUT_MS,
-      { allComponentsPresent: true, missingComponents: 'check failed' }, // default pass on timeout
+      { allComponentsPresent: true, missingComponents: 'check timed out — relying on combined QA' }, // uncertain on timeout — let combined QA decide
     ),
     instructionCheckPromise,
   ]);
@@ -330,7 +333,21 @@ export async function runFocusedChecks(
   }));
 
   // Evaluate pass/fail
-  if (countResult.count !== 1) {
+  const isPairedProduct = /earring|jhumka|tops|pair|set|shoe|sandal|bangle|chudi|cufflink|sock|glove/i.test(productName);
+  const expectedCount = isPairedProduct ? -1 : 1; // -1 means allow any reasonable count (1-10)
+
+  if (expectedCount === -1) {
+    // Paired product — any count 1-10 is fine; only fail on missing or timeout
+    result.productCount = countResult.count;
+    if (countResult.count === -1) {
+      result.pass = false;
+      result.failReasons.push('product_count_timeout');
+    } else if (countResult.count === 0) {
+      result.pass = false;
+      result.failReasons.push('product_missing');
+    }
+    // count > 1 is expected and correct for paired products
+  } else if (countResult.count !== 1) {
     result.pass = false;
     if (countResult.count === -1) {
       result.failReasons.push('product_count_timeout');

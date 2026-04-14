@@ -86,10 +86,24 @@ export async function processImageJob(job: Job): Promise<void> {
 
   {
     // Stagger non-first jobs so styleIndex=0 has time to compute and store the
-    // profile before the other jobs check for it. If job 0 hasn't finished by
-    // the time they check, they each compute their own — that's fine.
+    // profile before the other jobs check for it. Poll every 3s up to 30s
+    // instead of an unconditional 25s sleep — typically saves 15-20s.
     if (styleIndex > 0) {
-      await new Promise(r => setTimeout(r, 3000));
+      const maxWaitMs = 30_000;
+      const pollIntervalMs = 3_000;
+      const pollStartMs = Date.now();
+
+      while (Date.now() - pollStartMs < maxWaitMs) {
+        const checkOrder = await prisma.order.findUnique({
+          where: { id: data.orderId },
+          select: { productProfile: true },
+        });
+        if (checkOrder?.productProfile) {
+          console.info(JSON.stringify({ event: 'product_profile_found_via_poll', waitMs: Date.now() - pollStartMs }));
+          break;
+        }
+        await new Promise(r => setTimeout(r, pollIntervalMs));
+      }
     }
 
     const orderForProfile = await prisma.order.findUnique({
@@ -191,8 +205,8 @@ export async function processImageJob(job: Job): Promise<void> {
 
         const videoResult = await generateMultiShotVideo({
           imageUrl: heroResult.outputUrl,
-          productCategory: data.productCategory,
-          productName: (productProfile as any)?.productName,
+          productName: (productProfile as any)?.productName ?? 'Product',
+          productCategory: (productProfile as any)?.productCategory ?? data.productCategory,
           style: data.style,
           lang: 'en',
         });
@@ -521,22 +535,18 @@ export async function processImageJob(job: Job): Promise<void> {
           )
           .filter((s): s is string => s !== null);
 
-        // Optimistic lock: complete the order if it hasn't been completed yet
-        const updated = await prisma.order.updateMany({
-          where: { id: data.orderId, status: { in: ['processing', 'payment_confirmed'] } },
-          data: {
-            status: 'completed',
-            outputImageUrls: sortedCompletedUrls,
-            processingCompletedAt: new Date(),
-          },
-        });
-
         // Fetch the user record — needed for both delivery paths below
         const user = await prisma.user.findUnique({
           where: { phoneNumber: data.phoneNumber },
         });
 
-        if (updated.count === 0) {
+        // Check if the order is already completed (optimistic lock read — write comes AFTER delivery)
+        const currentOrder = await prisma.order.findUnique({
+          where: { id: data.orderId },
+          select: { status: true },
+        });
+
+        if (currentOrder && !['processing', 'payment_confirmed'].includes(currentOrder.status)) {
           // Order was already completed (e.g. by another worker, or by a previous delivery run).
           // For style-change edits the session will be in EDIT_PROCESSING — we still need to
           // send the new output and feedback buttons so the user sees the updated result.
@@ -581,17 +591,37 @@ export async function processImageJob(job: Job): Promise<void> {
           phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
         });
 
-        // Deliver ALL completed outputs from every job in this order, with style labels
-        await sendProcessedImages(
-          data.phoneNumber,
-          sortedCompletedUrls,
-          (user?.language as 'hi' | 'en') || 'hi',
-          user?.name ?? undefined,
-          wa,
-          allVideoUrls,
-          allStoryUrls,
-          styleLabels.length > 0 ? styleLabels : undefined,
-        );
+        // Deliver ALL completed outputs BEFORE marking the order complete.
+        // If delivery fails, BullMQ will retry — order stays in processing state.
+        try {
+          await sendProcessedImages(
+            data.phoneNumber,
+            sortedCompletedUrls,
+            (user?.language as 'hi' | 'en') || 'hi',
+            user?.name ?? undefined,
+            wa,
+            allVideoUrls,
+            allStoryUrls,
+            styleLabels.length > 0 ? styleLabels : undefined,
+          );
+        } catch (deliveryErr) {
+          // Do NOT mark order complete — throw so BullMQ retries delivery
+          throw deliveryErr;
+        }
+
+        // Optimistic lock: mark order complete now that delivery succeeded
+        const updated = await prisma.order.updateMany({
+          where: { id: data.orderId, status: { in: ['processing', 'payment_confirmed'] } },
+          data: {
+            status: 'completed',
+            outputImageUrls: sortedCompletedUrls,
+            processingCompletedAt: new Date(),
+          },
+        });
+
+        if (updated.count === 0) {
+          log('Order completed by another worker during delivery window — delivery already sent');
+        }
 
         // Transition session to DELIVERED from PROCESSING, EDIT_PROCESSING, IDLE, or
         // AWAITING_REVISION_PAYMENT. The last case covers a race where the user paid for

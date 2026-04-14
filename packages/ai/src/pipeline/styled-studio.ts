@@ -112,15 +112,15 @@ export async function createStyledStudioShot(
   // Step 3: Enhance cutout edges
   const enhancedCutout = await enhanceCutout(cutoutBuffer, productCategory);
 
-  // Step 4: Resize cutout to fit within canvas (65% fill)
-  const FILL_RATIO = 0.65;
+  // Step 4: Resize cutout to fit within canvas (78% fill — large enough to look intentional)
+  const FILL_RATIO = 0.78;
   const maxProductSize = Math.round(SIZE * FILL_RATIO);
   const resizedProduct = await sharp(enhancedCutout)
-    .resize(maxProductSize, maxProductSize, { fit: 'inside', withoutEnlargement: true })
+    .resize(maxProductSize, maxProductSize, { fit: 'inside' })
     .png()
     .toBuffer();
 
-  // Step 5: Create styled background
+  // Step 5: Create styled background — use style-appropriate color
   const bg = getBackgroundConfig(style);
   let backgroundBuffer = await sharp({
     create: {
@@ -186,25 +186,8 @@ export async function createStyledStudioShot(
   // Place product so its bottom edge sits just above the surface line
   const top = Math.round(surfaceLineY - pH * 0.85);
 
-  // Step 8b: Create contact shadow under the product
+  // Step 8b: Composite product (no synthetic shadow — flatten+ensureAlpha produces visible dark rectangles)
   const composites: { input: Buffer; left: number; top: number; blend?: string }[] = [];
-  try {
-    const shadowBlur = Math.max(Math.round(pW * 0.04), 4);
-    const shadowBuffer = await sharp(resizedProduct)
-      .flatten({ background: { r: 0, g: 0, b: 0 } }) // black silhouette
-      .ensureAlpha(0.10) // subtle transparency
-      .blur(shadowBlur)
-      .png()
-      .toBuffer();
-    composites.push({
-      input: shadowBuffer,
-      left: left + Math.round(pW * 0.03),
-      top: top + Math.round(pH * 0.04),
-    });
-  } catch {
-    // Shadow creation failed — skip it, composite product without shadow
-  }
-
   composites.push({ input: resizedProduct, left, top });
 
   let result = await sharp(backgroundBuffer)

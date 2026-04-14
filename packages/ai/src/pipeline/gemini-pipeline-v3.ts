@@ -14,8 +14,8 @@ import type { ProcessImageParams, ProcessImageResult } from './orchestrator.js';
 // Constants
 // ---------------------------------------------------------------------------
 
-const MAX_GENERATION_ATTEMPTS = 4; // 3 parallel + 1 retry
-const PARALLEL_CANDIDATES = 3;     // V3 uses 3 candidates for bolder creative choices
+const MAX_GENERATION_ATTEMPTS = 3; // 2 parallel + 1 retry (style_with_model gets +1 via maxAttempts override)
+const PARALLEL_CANDIDATES = 2;     // V3 uses 2 candidates for bolder creative choices
 
 // ---------------------------------------------------------------------------
 // Border Detection & Auto-Crop
@@ -152,7 +152,7 @@ async function detectAndCropBorder(buffer: Buffer): Promise<{ cropped: boolean; 
  * Key differences from V2:
  *   - Creative Concept System: heroMoment, dynamicElements, storyScene drive generation
  *   - Story-first generation prompt (scene → product → realism → rules)
- *   - 3 parallel candidates at different creative temperatures
+ *   - 2 parallel candidates at different creative temperatures
  *   - Border detection & auto-crop
  *   - Selector evaluates emotional impact, not just photorealism
  */
@@ -323,6 +323,15 @@ export async function processProductImageV3(
   const isSmall = validPlan.productPhysicalSize === 'tiny' || validPlan.productPhysicalSize === 'small';
   const productName = validPlan.analysis.productName;
 
+  // Force extreme close-up for small/tiny packaged food to prevent Gemini filling empty space with duplicates
+  const isFoodPackage = validPlan.productCategory === 'food' &&
+    /bar|packet|pouch|sachet|bag|wrapper|can|bottle|box|jar/i.test(productName);
+  const fillInstruction = isFoodPackage
+    ? '85-90% of the frame in extreme close-up macro — the packaging fills nearly the entire image'
+    : isSmall
+      ? '70-80% of the frame in tight close-up macro'
+      : null; // null = use fillPct variable below
+
   // -----------------------------------------------------------------------
   // STORY-FIRST Generation Prompt
   // -----------------------------------------------------------------------
@@ -340,6 +349,108 @@ export async function processProductImageV3(
       style_clickkar_special: 'Shot on the perfect cinema camera for this specific product — the photographer selected the ideal focal length, aperture, and ISO to maximize emotional impact. The gear choices serve the story, not a template.',
     };
     return specs[style] ?? specs['style_lifestyle']!;
+  }
+
+  function buildAntiPatternGuards(plan: typeof validPlan): string {
+    const category = plan.productCategory;
+    const productType = (plan.analysis?.productType ?? '').toLowerCase();
+    const productName = (plan.analysis?.productName ?? '').toLowerCase();
+
+    const guards: string[] = [];
+
+    // Food guards
+    if (category === 'food') {
+      guards.push('FOOD GUARD: If this is a packaged snack/bar — NO plate, NO cutlery, NO steam. Show product in its original packaging.');
+
+      if (productName.includes('chai') || productName.includes('tea')) {
+        guards.push('CHAI GUARD: Serve in kulhad or cutting chai glass. NEVER in a Western mug. Steam MUST be present.');
+      }
+      if (productName.includes('coffee') || productName.includes('filter')) {
+        guards.push('COFFEE GUARD: If South Indian filter coffee, use davara-tumbler. NOT a paper cup.');
+      }
+      if (/protein|bar|energy|snack|chips|biscuit|cookie|namkeen/i.test(productName)) {
+        guards.push('SNACK GUARD: This is a grab-and-go product. Eaten BY HAND from packaging. NO plate, NO fork/knife, NO formal dining. Setting: gym, office, outdoor, car.');
+      }
+      if (/masala|spice|powder|seasoning/i.test(productName)) {
+        guards.push('SPICE GUARD: This is a cooking INGREDIENT, not a served dish. Show with scattered whole spices. NEVER plated as food.');
+      }
+      if (/bar|packet|pouch|sachet/i.test(productType) || /bar|packet|pouch|sachet|small/i.test(productName)) {
+        guards.push('PACKAGED PRODUCT RULE: Show the product in its ORIGINAL SEALED PACKAGING. Do NOT unwrap, open, cut, or break the product. Do NOT show the product contents outside the wrapper. The SEALED PACKAGE is the product.');
+        guards.push('SINGLE UNIT: There is EXACTLY ONE package/bar/pouch in this image. Do NOT add a second one anywhere — not in background, not partially visible, not as a "broken piece". ONE sealed package only.');
+      }
+      if (/mithai|ladoo|barfi|halwa|sweet|gulab/i.test(productName)) {
+        guards.push('MITHAI GUARD: Serve on brass/steel thali. Marigold petals, diyas. NEVER Western plate with fork.');
+      }
+    }
+
+    // Jewellery guards
+    if (category === 'jewellery') {
+      guards.push('JEWELLERY GUARD: NO water, condensation, or moisture on jewellery EVER.');
+      if (/necklace|chain|haar|mala/i.test(productType)) {
+        guards.push('NECKLACE GUARD: Must be on a velvet bust, neck, or draped on fabric. NEVER flat on a desk.');
+      }
+      if (/bangle|chudi|kada/i.test(productType)) {
+        guards.push('BANGLE GUARD: Always show in a SET (multiple bangles). NEVER a single bangle.');
+      }
+      if (/earring|jhumka|tops/i.test(productType)) {
+        guards.push('EARRING GUARD: Always show as a PAIR.');
+      }
+    }
+
+    // Garment guards
+    if (category === 'garment') {
+      if (/saree|sari/i.test(productType)) {
+        guards.push('SAREE GUARD: MUST be draped or on mannequin. NEVER shown folded flat. Pallu and border must be visible.');
+      }
+    }
+
+    // Skincare guards
+    if (category === 'skincare') {
+      if (/ayurved|herbal|natural|organic/i.test(productName)) {
+        guards.push('AYURVEDIC GUARD: Rustic, natural setting. Herbs, clay, wood. NOT clinical sterile white.');
+      }
+    }
+
+    // Candle guards
+    if (category === 'candle') {
+      guards.push('CANDLE GUARD: Candle MUST be shown LIT with visible flame. Indoor evening setting only.');
+    }
+
+    // Home goods guards
+    if (category === 'home_goods') {
+      if (/deity|god|ganesh|lakshmi|krishna|shiva|buddha|idol|murti/i.test(productName)) {
+        guards.push('DEITY GUARD: Absolute reverence required. Pooja room or altar setting ONLY. NEVER near food, beverages, or in casual settings.');
+      }
+      if (/frame|painting|art|poster/i.test(productType)) {
+        guards.push('WALL ART GUARD: Show on a wall in a room context. NEVER lying flat on a table.');
+      }
+      if (/candle/i.test(productType)) {
+        guards.push('CANDLE GUARD: Must be shown LIT. Indoor evening setting.');
+      }
+    }
+
+    if (guards.length === 0) return '';
+
+    return `\nPRODUCT-SPECIFIC GUARDS (VIOLATING THESE MAKES THE AD UNUSABLE):\n${guards.map(g => `- ${g}`).join('\n')}\n`;
+  }
+
+  // Hoist instruction filtering to outer scope so it is available both inside
+  // buildGenerationPromptV3 and in the generation loop (QA / compliance checks).
+  let filteredInstructions = params.voiceInstructions;
+  if (params.style !== 'style_with_model' && filteredInstructions) {
+    const modelPhrases = [
+      /\b(make|have|use|add|show|include)\s+(the\s+)?(model|person|woman|man|girl|boy|lady|guy)\b[^.!?\n]*/gi,
+      /\b(black|white|indian|european|asian|african)\s+(woman|man|model|person|girl|boy|lady)\b[^.!?\n]*/gi,
+      /\b(blonde|brunette|redhead)\s+(hair|woman|model|person)\b[^.!?\n]*/gi,
+      /\bmodel\s+(should|must|needs?\s+to)\b[^.!?\n]*/gi,
+      /\b(holding|eating|drinking|wearing|using)\s+(the|a|an)\s+product\b[^.!?\n]*/gi,
+    ];
+    for (const pattern of modelPhrases) {
+      filteredInstructions = filteredInstructions.replace(pattern, '').trim();
+    }
+    if (filteredInstructions.length < 5) {
+      filteredInstructions = undefined;
+    }
   }
 
   function buildGenerationPromptV3(warnings?: string[]): string {
@@ -370,9 +481,10 @@ export async function processProductImageV3(
     const isLifestyle = params.style === 'style_lifestyle';
     const isOutdoor = params.style === 'style_outdoor';
 
-    const userInstructionBlock = params.voiceInstructions
+    // Use the outer-scope filteredInstructions (model phrases already stripped for non-model styles)
+    const userInstructionBlock = filteredInstructions
       ? `\nUSER'S CREATIVE DIRECTION (apply ONLY what is relevant to the product in this photo):
-"${params.voiceInstructions.slice(0, 300)}"
+"${filteredInstructions.slice(0, 300)}"
 RULES FOR APPLYING THIS INSTRUCTION:
 - MULTI-STYLE AWARENESS: The user's instruction may reference multiple styles (e.g., "make the studio red and the model in a church"). Apply ONLY the parts relevant to THIS style (${params.style}). If the instruction mentions a setting or change for a DIFFERENT style, IGNORE that part completely. If no part of the instruction is relevant to this style, proceed as if no instruction was given.
 - MODEL REFERENCES: If the user mentions "the model", "the person", "someone holding", or describes a person's characteristics (age, gender, ethnicity, clothing), this applies ONLY to the style_with_model style. For ALL other styles, do NOT add a person based on these instructions. Other styles have their own rules about whether people appear (most styles explicitly prohibit people).
@@ -393,8 +505,43 @@ RULES FOR APPLYING THIS INSTRUCTION:
       ? `\nCLEAN WHITE RULE: ZERO props. Only the product on a pure white background. No objects, no decorations, no scattered items. Just the product and its shadow.\n`
       : '';
 
-    return `${getCameraSpec(params.style ?? 'style_lifestyle')}
+    // Build anti-pattern guards based on detected product type
+    const antiPatterns = buildAntiPatternGuards(validPlan);
 
+    const antiDuplicationBlock = `
+SINGLE PRODUCT RULE — CRITICAL:
+There must be EXACTLY ONE physical copy of the product in this image. NOT two, NOT a pair, NOT a stack.
+- No second product in the background
+- No smaller copy in the distance
+- No product reflected in a mirror
+- If the product is small: fill remaining space with SCENE ELEMENTS (props, texture, light) — NOT with a second copy of the product
+- ONE product only. This is non-negotiable.
+`;
+
+    // Build usage context block from analysis
+    const usageContext = validPlan.analysis?.servingTemperature && validPlan.analysis.servingTemperature !== 'not_applicable'
+      ? `
+PRODUCT USAGE RULES (from real-world usage analysis — VIOLATING THESE IS A FATAL ERROR):
+- Temperature: ${validPlan.analysis.servingTemperature} — ${validPlan.analysis.servingTemperature === 'room_temperature' ? 'NO steam, NO heat effects, NO condensation on the product, NO heat haze' : validPlan.analysis.servingTemperature === 'hot' ? 'steam and warmth are appropriate near the product' : validPlan.analysis.servingTemperature === 'frozen' ? 'frost, ice crystals, and extreme cold effects are appropriate' : 'condensation and light cold effects are appropriate'}
+- How consumed/used: ${validPlan.analysis.consumptionMethod}
+- Typical setting: ${validPlan.analysis.typicalSetting} — the scene MUST match this real-world setting. DO NOT place this product in a formal dining table setting, fine restaurant, or any context that contradicts how it is actually consumed/used.
+- Served in / presented as: ${validPlan.analysis.servingVessel}${(validPlan.analysis.servingVessel?.toLowerCase().includes('none') || validPlan.analysis.servingVessel?.toLowerCase().includes('wrapper') || validPlan.analysis.servingVessel?.toLowerCase().includes('not_applicable')) ? ' — DO NOT place this product on a plate, in a bowl, or in any serving vessel it does not belong in' : ''}
+- Utensils: ${validPlan.analysis.utensils}${validPlan.analysis.utensils?.toLowerCase().includes('hand') ? ' — DO NOT show fork, knife, chopsticks, or spoon near this product' : ''}
+- Occasion: ${validPlan.analysis.usageOccasion}
+`
+      : '';
+
+    const transparencyGuard = validPlan.isTransparent
+      ? '\nTRANSPARENCY RULE: This product is transparent/glass. The output MUST preserve the transparency — you should be able to see THROUGH the product. Do NOT make it opaque or fill it with colored liquid unless it was already filled in the input photo.\n'
+      : '';
+
+    const productStateGuard = validPlan.analysis?.productState === 'sealed' ||
+      (validPlan.productCategory === 'food' && /bar|packet|pouch|bag|wrapper|can|bottle/i.test(productName))
+      ? '\nPACKAGING INTEGRITY: Show the product in its ORIGINAL SEALED PACKAGING. Do NOT unwrap, open, break, cut, pour, or show the contents. The sealed package IS the product the seller is selling.\n'
+      : '';
+
+    return `${getCameraSpec(params.style ?? 'style_lifestyle')}
+${usageContext}${productStateGuard}${antiPatterns}${antiDuplicationBlock}${transparencyGuard}
 ABSOLUTE PRODUCT INTEGRITY RULES (NEVER VIOLATE):
 - The product in the output MUST be a pixel-perfect recreation of the input product. Same shape, same proportions, same colors, same opacity, same material finish.
 - EMPTY containers STAY EMPTY. If the bottle/jar/container has no visible liquid in the input photo, it MUST remain empty in the output. Do NOT add water, juice, liquid, or any colored substance inside.
@@ -402,7 +549,7 @@ ABSOLUTE PRODUCT INTEGRITY RULES (NEVER VIOLATE):
 - Do NOT add condensation, water droplets, frost, dew, or moisture to the product surface. The product must appear EXACTLY as dry or wet as in the input photo. Even if the product is a water bottle or beverage container, if the input photo shows a DRY surface, the output MUST show a DRY surface. Water droplets on a product that is dry in the input photo is a PRODUCT ALTERATION and is UNACCEPTABLE.
 - Do NOT change the product's proportions. If the bottle is tall and slim, it stays tall and slim. Do not make it squatter, wider, or shorter.
 
-A photograph of a product advertisement. Edge-to-edge composition, no borders or frames. Exactly one product instance.${params.style !== 'style_with_model' ? ' No people, hands, or body parts anywhere.' : ''} The product from the input photo fills ${isSmall ? 'the majority of the frame in tight macro' : (isLifestyle || isOutdoor ? '40-50%' : fillPct + '%')} of the frame.
+A photograph of a product advertisement. Edge-to-edge composition, no borders or frames. Exactly one product instance.${params.style !== 'style_with_model' ? ' No people, hands, or body parts anywhere.' : ''} The product from the input photo fills ${fillInstruction ?? (isLifestyle || isOutdoor ? '40-50%' : fillPct + '%')} of the frame.
 ${userInstructionBlock}
 ${warningBlock}
 ${validPlan.creativeBrief}
@@ -416,7 +563,9 @@ The product shows real material properties — packaging catches light with spec
 
 CRITICAL FOR WITH MODEL: The product MUST maintain its EXACT original shape, size, and form factor when held by the person. A small flat pouch stays a SMALL FLAT POUCH — do not turn it into a handbag or clutch. A wristlet stays a wristlet — do not change it to a shoulder bag. The person's hands must grip the product AS IT IS, not reshape it to fit a different product type. If the product is too small to be clearly visible when held, show the person PRESENTING it (holding it up to camera, resting it on an open palm) rather than obscuring it in a grip.
 
-One Indian/South Asian person actively using the product. Natural features: visible pores, asymmetric expression, flyaway hair. Each hand has exactly 5 fingers. Natural body proportions.` : ''}`;
+One Indian/South Asian person actively using the product. Natural features: visible pores, asymmetric expression, flyaway hair. Each hand has exactly 5 fingers. Natural body proportions.
+
+ANATOMY PERFECTION (NON-NEGOTIABLE): Before generating, mentally count: 2 arms, 2 legs, 2 hands with exactly 5 fingers each, 2 feet. Arms must be natural proportions — no elongation. Face must be symmetrical and natural with realistic skin texture. If you cannot generate a perfect person, generate the product ALONE in the scene without any person — a beautifully lit product-only scene is far better than a person with anatomy errors.` : ''}`;
   }
 
   let adBuffer: Buffer | null = null;
@@ -426,14 +575,16 @@ One Indian/South Asian person actively using the product. Natural features: visi
   let usedFallback = false;
 
   const retryWarnings: string[] = [];
+  // style_with_model has ~30% anatomy failure rate — allow 1 extra attempt to reduce tier fallbacks
+  const maxAttempts = params.style === 'style_with_model' ? MAX_GENERATION_ATTEMPTS + 1 : MAX_GENERATION_ATTEMPTS;
 
-  for (let attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const isFirstAttempt = attempt === 0;
 
     console.info(JSON.stringify({
       event: 'v3_generation_attempt',
       attempt: attempt + 1,
-      maxAttempts: MAX_GENERATION_ATTEMPTS,
+      maxAttempts,
       retryWarnings,
       productName,
     }));
@@ -444,11 +595,11 @@ One Indian/South Asian person actively using the product. Natural features: visi
 
     try {
       if (isFirstAttempt) {
-        // V3: 3 parallel candidates at different creative temperatures
+        // V3: 2 parallel candidates at different creative temperatures
         totalAttempts += (PARALLEL_CANDIDATES - 1);
 
         const candidates = await Promise.allSettled(
-          [0.4, 0.6, 0.8].map(temp =>
+          [0.4, 0.7].map(temp =>
             geminiGenerateImage({ inputImageBuffer: generationBuffer, prompt, temperature: temp })
           )
         );
@@ -570,7 +721,7 @@ One Indian/South Asian person actively using the product. Natural features: visi
     adBuffer = await addAILabel(adBuffer);
 
     // ------- LAYER 1: Focused AI Binary Checks (~2s) -------
-    lastFocused = await runFocusedChecks(processedBuffer, adBuffer, productName, params.voiceInstructions);
+    lastFocused = await runFocusedChecks(processedBuffer, adBuffer, productName, filteredInstructions);
 
     console.info(JSON.stringify({
       event: 'v3_layer1_complete',
@@ -608,14 +759,20 @@ One Indian/South Asian person actively using the product. Natural features: visi
     }
 
     // ------- INSTRUCTION COMPLIANCE CHECK -------
-    if (lastFocused && lastFocused.instructionFollowed === false && params.voiceInstructions) {
-      retryWarnings.push(`Previous attempt IGNORED the user's instruction: "${params.voiceInstructions.slice(0, 100)}". The next attempt MUST incorporate this instruction visibly.`);
+    if (lastFocused && lastFocused.instructionFollowed === false && filteredInstructions) {
+      retryWarnings.push(`Previous attempt IGNORED the user's instruction: "${filteredInstructions.slice(0, 100)}". The next attempt MUST incorporate this instruction visibly.`);
+      // If retries remain, discard this attempt and try again with the warning injected
+      if (attempt < maxAttempts - 1) {
+        adBuffer = null;
+        continue;
+      }
+      // On last attempt, deliver whatever we have (better than nothing)
     }
 
     // ------- LAYER 2: AI Quality Scoring -------
     qaResult = await combinedQualityCheck(processedBuffer, adBuffer, {
       checkFidelity: true,
-      voiceInstructions: params.voiceInstructions,
+      voiceInstructions: filteredInstructions,
     });
 
     console.info(JSON.stringify({
@@ -632,7 +789,7 @@ One Indian/South Asian person actively using the product. Natural features: visi
     }
 
     // QA score low — try surgical edit
-    if (qaResult.issues.length > 0 && attempt < MAX_GENERATION_ATTEMPTS - 1) {
+    if (qaResult.issues.length > 0 && attempt < maxAttempts - 1) {
       const issueText = qaResult.issues[0] ?? 'Improve overall quality';
       const fixPrompt = `You are given two images:
 Image 1: The ORIGINAL product photo (reference)
@@ -666,7 +823,7 @@ Make ONLY this fix. Do not change the overall scene, composition, dynamic elemen
           break;
         }
 
-        const recheckFocused = await runFocusedChecks(processedBuffer, adBuffer, productName, params.voiceInstructions);
+        const recheckFocused = await runFocusedChecks(processedBuffer, adBuffer, productName, filteredInstructions);
         if (!recheckFocused.pass) {
           adBuffer = preEditBuffer;
           break;
