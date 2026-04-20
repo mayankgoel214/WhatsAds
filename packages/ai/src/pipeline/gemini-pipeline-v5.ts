@@ -40,6 +40,33 @@ const V5_QA_FIDELITY_MIN = 25;
 const V5_BEST_OF_MIN_SCORE = 55;
 
 // ---------------------------------------------------------------------------
+// Candidate selection composite gate
+//
+// Previously `selectBestCandidate` picked the highest-scoring candidate but
+// shipped it unconditionally — a candidate with pass:false and 50% fill would
+// still win and go to QA. In the 2026-04-20 prod run both candidates had
+// pass:false and fill:50 (see PRODUCTION_READINESS_PLAN.md P0-3), idx:0 still
+// shipped as winner. The existing fields were decorative.
+//
+// The composite combines the three signals we already compute:
+//   fillPct     — 0..100, how much of the canvas shows product/scene content
+//   deterministicPass — 0|20, bonus if the gate thinks nothing is obviously wrong
+//   sharpness   — 0|10, bonus if the image isn't flagged blurry by Laplacian
+//   symmetryPenalty — 0..50, penalty proportional to quadrant duplication risk
+//
+// compositeScore = max(0, fillPct + deterministicPass + sharpness - symmetryPenalty)
+//
+// Threshold: compositeScore >= V5_CANDIDATE_MIN_COMPOSITE. The worst-case we
+// want to ship is "just barely not garbage" — a candidate with 40% fill, no
+// deterministic pass, no blur penalty, low symmetry risk scores 45–50. Picking
+// 50 lets those through while rejecting the 2026-04-20 pattern where both
+// candidates scored exactly fill=50 with pass:false and got silently shipped.
+// The later combinedQualityCheck gate still has final say via its own
+// V5_QA_PASS_SCORE / V5_BEST_OF_MIN_SCORE thresholds.
+// ---------------------------------------------------------------------------
+const V5_CANDIDATE_MIN_COMPOSITE = 50;
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -155,36 +182,93 @@ async function detectAndCropBorder(buffer: Buffer): Promise<Buffer> {
 // Candidate selector — deterministic, no API cost
 // ---------------------------------------------------------------------------
 
-async function selectBestCandidate(inputBuffer: Buffer, candidates: Buffer[]): Promise<Buffer> {
-  if (candidates.length === 1) return candidates[0]!;
+interface CandidateSelection {
+  buffer: Buffer;
+  compositeScore: number;
+  clearedThreshold: boolean;
+}
+
+/**
+ * Compute composite score from deterministic-check output.
+ * See V5_CANDIDATE_MIN_COMPOSITE comment for weighting rationale.
+ */
+function computeCompositeScore(check: {
+  pass: boolean;
+  estimatedFillPct: number;
+  quadrantSymmetry: number;
+  failReason: string | null;
+}): number {
+  const fill = check.estimatedFillPct ?? 0;
+  const deterministicPass = check.pass ? 20 : 0;
+  const sharpness = check.failReason?.includes('blurry') ? 0 : 10;
+  const symmetryPenalty = (check.quadrantSymmetry ?? 0) * 50;
+  return Math.max(0, fill + deterministicPass + sharpness - symmetryPenalty);
+}
+
+async function selectBestCandidate(
+  inputBuffer: Buffer,
+  candidates: Buffer[],
+): Promise<CandidateSelection> {
+  if (candidates.length === 1) {
+    // Single candidate — still run the gate so caller can fall through to Tier 2.
+    const only = await runDeterministicChecks(inputBuffer, candidates[0]!);
+    const composite = computeCompositeScore(only);
+    const cleared = composite >= V5_CANDIDATE_MIN_COMPOSITE;
+
+    console.info(JSON.stringify({
+      event: 'v5_candidate_selected',
+      winner: 0,
+      totalCandidates: 1,
+      compositeScore: composite,
+      threshold: V5_CANDIDATE_MIN_COMPOSITE,
+      clearedThreshold: cleared,
+      scores: [{ idx: 0, pass: only.pass, fill: only.estimatedFillPct, composite }],
+    }));
+
+    return {
+      buffer: candidates[0]!,
+      compositeScore: composite,
+      clearedThreshold: cleared,
+    };
+  }
 
   const checks = await Promise.all(candidates.map(c => runDeterministicChecks(inputBuffer, c)));
 
-  let bestIdx = 0;
-  let bestScore = -Infinity;
+  // Composite score drives selection AND the gate. See V5_CANDIDATE_MIN_COMPOSITE.
+  const composites = checks.map(computeCompositeScore);
 
-  for (let i = 0; i < candidates.length; i++) {
-    const check = checks[i]!;
-    let score = 0;
-    if (check.pass) score += 100;
-    score += (check.estimatedFillPct ?? 0);
-    score -= (check.quadrantSymmetry ?? 0) * 50;
-    if (check.sceneNCC < 0.8) score += 20;
-    if (!check.failReason?.includes('blurry')) score += 10;
-    if (score > bestScore) {
-      bestScore = score;
+  let bestIdx = 0;
+  let bestComposite = -Infinity;
+
+  for (let i = 0; i < composites.length; i++) {
+    if (composites[i]! > bestComposite) {
+      bestComposite = composites[i]!;
       bestIdx = i;
     }
   }
+
+  const cleared = bestComposite >= V5_CANDIDATE_MIN_COMPOSITE;
 
   console.info(JSON.stringify({
     event: 'v5_candidate_selected',
     winner: bestIdx,
     totalCandidates: candidates.length,
-    scores: checks.map((c, i) => ({ idx: i, pass: c.pass, fill: c.estimatedFillPct })),
+    compositeScore: bestComposite,
+    threshold: V5_CANDIDATE_MIN_COMPOSITE,
+    clearedThreshold: cleared,
+    scores: checks.map((c, i) => ({
+      idx: i,
+      pass: c.pass,
+      fill: c.estimatedFillPct,
+      composite: composites[i],
+    })),
   }));
 
-  return candidates[bestIdx]!;
+  return {
+    buffer: candidates[bestIdx]!,
+    compositeScore: bestComposite,
+    clearedThreshold: cleared,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +357,7 @@ async function runDirectTrack(
   voiceInstructions: string | undefined,
   referenceBuffers: Buffer[] | undefined,
   temperatures: number[],
-): Promise<Buffer> {
+): Promise<CandidateSelection> {
   const prompt = getStylePromptV5(style, 'DIRECT', analysis, voiceInstructions);
 
   if (temperatures.length === 1) {
@@ -283,7 +367,7 @@ async function runDirectTrack(
       temperature: temperatures[0],
       referenceImageBuffers: referenceBuffers,
     });
-    return result.imageBuffer;
+    return selectBestCandidate(processedBuffer, [result.imageBuffer]);
   }
 
   // Generate multiple candidates in parallel, pick best deterministically
@@ -459,7 +543,7 @@ export async function processProductImageV5(
       // COMPOSITE track is disabled — always run DIRECT.
       // attempt 1 uses 2 parallel temps, retry uses single call
       const temperatures = isRetry ? [0.5] : [0.5, 0.7];
-      candidateBuffer = await runDirectTrack(
+      const selection = await runDirectTrack(
         croppedBuffer,
         style,
         analysis,
@@ -467,6 +551,30 @@ export async function processProductImageV5(
         params.referenceImageBuffers,
         temperatures,
       );
+
+      // Composite score gate: if the best candidate from this attempt didn't
+      // clear the deterministic threshold, skip the expensive QA call and
+      // retry (or fall through to Tier 2 on the final attempt). Previously the
+      // gate was decorative — a candidate with pass:false, fill:50 would still
+      // hit QA unchanged. Now it gets a chance to retry first.
+      if (!selection.clearedThreshold) {
+        console.warn(JSON.stringify({
+          event: 'v5_composite_gate_failed',
+          attempt,
+          compositeScore: selection.compositeScore,
+          threshold: V5_CANDIDATE_MIN_COMPOSITE,
+          action: isRetry ? 'fallthrough_to_tier2' : 'retry',
+        }));
+        if (isRetry) {
+          // Nothing cleared on retry either — let never-fail run Tier 2.
+          throw new Error(
+            `v5: composite-score gate failed (best=${selection.compositeScore.toFixed(1)}, threshold=${V5_CANDIDATE_MIN_COMPOSITE}) — falling to Tier 2`,
+          );
+        }
+        continue;
+      }
+
+      candidateBuffer = selection.buffer;
     } catch (genErr) {
       console.error(JSON.stringify({
         event: 'v5_generation_error',
