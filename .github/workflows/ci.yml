@@ -61,12 +61,12 @@ jobs:
         run: npm install -g @railway/cli
 
       - name: Deploy API to staging
-        run: railway up --service clickkar-api --environment staging --detach
+        run: railway up --service autmn-api --environment staging --detach
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
 
       - name: Deploy Worker to staging
-        run: railway up --service clickkar-worker --environment staging --detach
+        run: railway up --service autmn-worker --environment staging --detach
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
 
@@ -84,11 +84,11 @@ jobs:
         run: npm install -g @railway/cli
 
       - name: Deploy API to production
-        run: railway up --service clickkar-api --environment production --detach
+        run: railway up --service autmn-api --environment production --detach
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
 
       - name: Deploy Worker to production
-        run: railway up --service clickkar-worker --environment production --detach
+        run: railway up --service autmn-worker --environment production --detach
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}

@@ -53,7 +53,7 @@ const MOTION_PROMPTS: Record<string, string> = {
   style_outdoor: 'Smooth steadicam movement through scene. Golden hour light shifts dramatically. Wind moves natural elements around static product. Cinematic nature feel. No morphing, no distortion, photorealistic.',
   style_festive: 'Warm camera push-in with flickering light creating dancing shadows. Golden sparkles shimmer. Festive atmosphere with ambient motion. Premium Indian commercial. No morphing, no distortion, photorealistic.',
   style_with_model: 'Cinematic portrait movement. Person naturally shifts gaze and expression. Shallow depth of field creates drifting bokeh. Editorial fashion photography in motion. No morphing, no distortion, photorealistic.',
-  style_clickkar_special: 'Bold cinematic camera orbit with dramatic parallax depth. Volumetric lighting sweeps creating moving specular highlights. Particles drift through light beams. Award-winning commercial cinematography. No morphing, no distortion, photorealistic.',
+  style_autmn_special: 'Bold cinematic camera orbit with dramatic parallax depth. Volumetric lighting sweeps creating moving specular highlights. Particles drift through light beams. Award-winning commercial cinematography. No morphing, no distortion, photorealistic.',
   style_video_shoot: 'Bold cinematic camera orbit with dramatic parallax depth. Volumetric lighting sweeps across product creating moving specular highlights and reflections. Premium product advertisement with bold motion and energy. Award-winning commercial cinematography. No morphing, no distortion, photorealistic.',
 };
 
@@ -340,7 +340,7 @@ async function generateOutroClip(
         <rect x="0" y="${barY}" width="${w}" height="${barHeight}" fill="url(#grad)"/>
         <text x="${w / 2}" y="${barY + Math.round(barHeight * 0.45)}" font-family="Arial,Helvetica,sans-serif" font-weight="700" font-size="${fontSize}" fill="white" text-anchor="middle">${safeName}</text>
         <text x="${w / 2}" y="${barY + Math.round(barHeight * 0.70)}" font-family="Arial,Helvetica,sans-serif" font-weight="500" font-size="${ctaFontSize}" fill="rgba(255,255,255,0.85)" text-anchor="middle">${safeCTA}</text>
-        <text x="${w - 10}" y="${h - 8}" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="rgba(255,255,255,0.4)" text-anchor="end">Made with Clickkar</text>
+        <text x="${w - 10}" y="${h - 8}" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="rgba(255,255,255,0.4)" text-anchor="end">Made with Autmn</text>
       </svg>`,
     );
 

@@ -14,7 +14,7 @@ COPY packages/storage/package.json   ./packages/storage/
 COPY packages/ai/package.json        ./packages/ai/
 COPY apps/worker/package.json        ./apps/worker/
 
-RUN pnpm install --frozen-lockfile --filter @whatsads/worker...
+RUN pnpm install --frozen-lockfile --filter @autmn/worker...
 
 # ─── Stage 2: build ───────────────────────────────────────────────────────────
 FROM deps AS builder
@@ -28,14 +28,14 @@ COPY packages/storage/  ./packages/storage/
 COPY packages/ai/       ./packages/ai/
 COPY apps/worker/       ./apps/worker/
 
-RUN pnpm --filter @whatsads/db build
-RUN pnpm --filter @whatsads/queue build
-RUN pnpm --filter @whatsads/whatsapp build
-RUN pnpm --filter @whatsads/session build
-RUN pnpm --filter @whatsads/payment build
-RUN pnpm --filter @whatsads/storage build
-RUN pnpm --filter @whatsads/ai build
-RUN pnpm --filter @whatsads/worker build
+RUN pnpm --filter @autmn/db build
+RUN pnpm --filter @autmn/queue build
+RUN pnpm --filter @autmn/whatsapp build
+RUN pnpm --filter @autmn/session build
+RUN pnpm --filter @autmn/payment build
+RUN pnpm --filter @autmn/storage build
+RUN pnpm --filter @autmn/ai build
+RUN pnpm --filter @autmn/worker build
 
 # ─── Stage 3: runner ──────────────────────────────────────────────────────────
 FROM node:22-alpine AS runner
@@ -54,7 +54,7 @@ COPY packages/storage/package.json   ./packages/storage/
 COPY packages/ai/package.json        ./packages/ai/
 COPY apps/worker/package.json        ./apps/worker/
 
-RUN pnpm install --frozen-lockfile --filter @whatsads/worker... --prod
+RUN pnpm install --frozen-lockfile --filter @autmn/worker... --prod
 
 COPY --from=builder /app/packages/db/dist        ./packages/db/dist
 COPY --from=builder /app/packages/queue/dist     ./packages/queue/dist

@@ -2,7 +2,7 @@
  * Comprehensive pipeline test — multiple products, styles, and edge cases.
  * Validates the full refinement pipeline: Kontext + CodeFormer + ESRGAN + QA.
  *
- * Run: cd /Users/lending/Clickkar && npx tsx scripts/test-pipeline-comprehensive.ts
+ * Run: cd /Users/lending/Autmn && npx tsx scripts/test-pipeline-comprehensive.ts
  */
 
 import { readFileSync } from 'fs';
@@ -20,7 +20,7 @@ function loadEnv(envPath: string): void {
     process.env[trimmed.slice(0, eqIndex).trim()] = trimmed.slice(eqIndex + 1).trim();
   }
 }
-loadEnv(resolve('/Users/lending/Clickkar/.env'));
+loadEnv(resolve('/Users/lending/Autmn/.env'));
 
 import { processProductImage } from '../packages/ai/dist/index.js';
 

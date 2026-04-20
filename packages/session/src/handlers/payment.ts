@@ -8,11 +8,12 @@
  * - enqueueImageJobs() is shared with free-trial path (called by instructions.ts).
  */
 
-import type { WhatsAppClient } from '@whatsads/whatsapp';
-import { prisma } from '@whatsads/db';
-import type { Session, User, Order } from '@whatsads/db';
-import { createPaymentLink } from '@whatsads/payment';
-import { getPaymentCheckQueue, getImageQueue, getSessionTimeoutQueue } from '@whatsads/queue';
+import type { WhatsAppClient } from '@autmn/whatsapp';
+import { prisma } from '@autmn/db';
+import { parsePerStyleInstructions } from '@autmn/ai';
+import type { Session, User, Order } from '@autmn/db';
+import { createPaymentLink } from '@autmn/payment';
+import { getPaymentCheckQueue, getImageQueue, getSessionTimeoutQueue } from '@autmn/queue';
 import { transitionTo } from '../db-helpers.js';
 import {
   msgPaymentPending,
@@ -20,6 +21,7 @@ import {
   msgGenericError,
 } from '../messages.js';
 import { PAYMENT_CHECK_DELAY_MS, ButtonIds } from '../types.js';
+import type { Language } from '../types.js';
 import type { MessageContext } from '../types.js';
 import { logger } from '../logger.js';
 
@@ -33,7 +35,7 @@ export async function handleAwaitingPayment(
   message: MessageContext,
   wa: WhatsAppClient,
 ): Promise<void> {
-  const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
+  const lang = (user.language as Language) || 'hinglish';
   const phoneNumber = session.phoneNumber;
 
   // ---- Internal trigger: send the payment link ----
@@ -53,7 +55,7 @@ export async function handleAwaitingPayment(
     await transitionTo(phoneNumber, 'IDLE', { currentOrderId: null });
     await wa.sendText(
       phoneNumber,
-      lang === 'hi'
+      lang === 'hinglish'
         ? 'Order cancel ho gaya. Jab bhi ready hon, wapas aa jaana!'
         : 'Order cancelled. Come back whenever you are ready!',
     );
@@ -65,8 +67,8 @@ export async function handleAwaitingPayment(
     phoneNumber,
     msgPaymentPending(lang),
     [
-      { id: 'resend_link', title: lang === 'hi' ? 'Link dobara bhejo' : 'Resend Link' },
-      { id: ButtonIds.CANCEL_ORDER, title: lang === 'hi' ? 'Cancel' : 'Cancel' },
+      { id: 'resend_link', title: lang === 'hinglish' ? 'Link dobara bhejo' : 'Resend Link' },
+      { id: ButtonIds.CANCEL_ORDER, title: lang === 'hinglish' ? 'Cancel' : 'Cancel' },
     ],
   );
 }
@@ -109,7 +111,7 @@ export async function onPaymentConfirmed(
     return;
   }
 
-  const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
+  const lang = (user.language as Language) || 'hinglish';
 
   try {
     // Status already set to payment_confirmed by the idempotency guard above.
@@ -134,7 +136,7 @@ export async function onPaymentConfirmed(
         currentOrderId: order.id,
       });
 
-      await wa.sendText(phoneNumber, lang === 'hi'
+      await wa.sendText(phoneNumber, lang === 'hinglish'
         ? 'Kuch problem aayi. Kripya "hi" bhejein aur dobara try karein. Aapka payment safe hai.'
         : 'Something went wrong. Please send "hi" and try again. Your payment is safe.');
 
@@ -193,6 +195,44 @@ export async function enqueueImageJobs(
       ? stylesOrdered.map((styleId, i) => ({ styleId, styleIndex: i }))
       : [{ styleId: order.style ?? 'style_clean_white', styleIndex: 0 }]; // legacy single-job path
 
+  // ── Per-style instruction parsing ─────────────────────────────────────────
+  // If the customer sent instructions AND there are multiple styles, split the
+  // instruction into per-style slices so each Gemini call only sees its own
+  // directive. Falls back to applying the raw instruction to all styles on error.
+  let perStyleInstructions: Record<string, string | null> = {};
+  let globalInstruction: string | null = null;
+
+  if (voiceInstructions && styleJobs.length > 1) {
+    const parseStart = Date.now();
+    const parsed = await parsePerStyleInstructions({
+      rawInstructions: voiceInstructions,
+      styles: styleJobs.map(j => j.styleId),
+    });
+    perStyleInstructions = parsed.perStyle;
+    globalInstruction = parsed.globalInstruction;
+
+    console.info(JSON.stringify({
+      event: 'per_style_parse_done',
+      orderId,
+      confidence: parsed.confidence,
+      durationMs: Date.now() - parseStart,
+      perStyle: parsed.perStyle,
+      globalInstruction: parsed.globalInstruction,
+    }));
+  }
+
+  // Resolve the effective instruction for one style:
+  // - If parser returned both per-style and global, merge them ("perStyle. global.")
+  // - If only per-style, use that
+  // - If only global (or parser failed and returned raw as global), use that
+  // - If neither, undefined (no customer note)
+  function resolveInstructionForStyle(styleId: string): string | undefined {
+    const perStyle = perStyleInstructions[styleId] ?? null;
+    const parts = [perStyle, globalInstruction].filter((p): p is string => !!p?.trim());
+    if (parts.length === 0) return undefined;
+    return parts.join('. ');
+  }
+
   console.info(JSON.stringify({
     event: 'enqueue_image_jobs_start',
     orderId,
@@ -214,13 +254,20 @@ export async function enqueueImageJobs(
       },
     });
 
+    // Use the style-specific instruction if we parsed one, else fall back to the
+    // raw voiceInstructions (single-style order, or parser was skipped).
+    const effectiveInstruction =
+      styleJobs.length > 1
+        ? resolveInstructionForStyle(styleId)
+        : (voiceInstructions ?? undefined);
+
     await imageQueue.add('process_image', {
       orderId,
       imageJobId: imageJob.id,
       phoneNumber,
       inputImageUrl: primaryInputImageUrl,
       style: styleId,
-      voiceInstructions: order.voiceInstructions ?? undefined,
+      voiceInstructions: effectiveInstruction,
       productCategory: order.productCategory ?? undefined,
       pipeline: 'primary',
     });
@@ -247,7 +294,7 @@ export async function sendPaymentLink(
   user: User,
   wa: WhatsAppClient,
 ): Promise<void> {
-  const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
+  const lang = (user.language as Language) || 'hinglish';
   const phoneNumber = session.phoneNumber;
 
   if (!session.currentOrderId) {
@@ -271,11 +318,11 @@ export async function sendPaymentLink(
     // Reuse existing link
     await wa.sendPaymentLink(
       phoneNumber,
-      lang === 'hi'
+      lang === 'hinglish'
         ? `${order.imageCount} photo • 3 professional ads • Rs ${order.amount / 100}\nPayment karein:`
         : `${order.imageCount} photo(s) • 3 professional ads • Rs ${order.amount / 100}\nPay to get started:`,
       order.razorpayPaymentLinkUrl,
-      lang === 'hi' ? 'Payment karo' : 'Pay Now',
+      lang === 'hinglish' ? 'Payment karo' : 'Pay Now',
     );
     return;
   }
@@ -295,7 +342,7 @@ export async function sendPaymentLink(
       customerPhone: phoneNumber,
       customerName: user.name ?? undefined,
       amount: order.amount, // paise — always from DB, never client-provided
-      description: `Clickkar - ${order.imageCount} photo(s), 3 ads`,
+      description: `Autmn - ${order.imageCount} photo(s), 3 ads`,
       expiresInMinutes: 30,
     });
 
@@ -310,11 +357,11 @@ export async function sendPaymentLink(
 
     await wa.sendPaymentLink(
       phoneNumber,
-      lang === 'hi'
+      lang === 'hinglish'
         ? `${order.imageCount} photo • 3 professional ads • Rs ${order.amount / 100}\nPayment karein:`
         : `${order.imageCount} photo(s) • 3 professional ads • Rs ${order.amount / 100}\nPay to get started:`,
       link.shortUrl,
-      lang === 'hi' ? 'Payment karo' : 'Pay Now',
+      lang === 'hinglish' ? 'Payment karo' : 'Pay Now',
     );
 
     await schedulePaymentCheck(order.id, phoneNumber, link.id);
@@ -385,7 +432,7 @@ export async function onRevisionPaymentConfirmed(
     return;
   }
 
-  const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
+  const lang = (user.language as Language) || 'hinglish';
 
   try {
     // Increment revision count
@@ -433,7 +480,7 @@ export async function onRevisionPaymentConfirmed(
 
     await wa.sendText(
       phoneNumber,
-      lang === 'hi'
+      lang === 'hinglish'
         ? 'Payment mil gaya! Aapka edit process ho raha hai...'
         : 'Payment received! Processing your edit...',
     );
@@ -450,7 +497,7 @@ export async function onRevisionPaymentConfirmed(
       orderId,
       error: err instanceof Error ? err.message : String(err),
     });
-    await wa.sendText(phoneNumber, lang === 'hi'
+    await wa.sendText(phoneNumber, lang === 'hinglish'
       ? 'Kuch gadbad ho gayi. Thodi der mein dobara koshish karein.'
       : 'Something went wrong. Please try again in a moment.');
   }

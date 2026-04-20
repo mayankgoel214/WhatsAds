@@ -9,9 +9,9 @@
  */
 
 import type { Job } from 'bullmq';
-import { prisma } from '@whatsads/db';
-import { WhatsAppClient } from '@whatsads/whatsapp';
-import { SessionTimeoutJobDataSchema } from '@whatsads/queue';
+import { prisma } from '@autmn/db';
+import { WhatsAppClient } from '@autmn/whatsapp';
+import { SessionTimeoutJobDataSchema } from '@autmn/queue';
 import { getConfig } from '../config.js';
 
 export async function processSessionTimeout(job: Job): Promise<void> {
@@ -46,7 +46,7 @@ export async function processSessionTimeout(job: Job): Promise<void> {
       // PROCESSING nudge → tell user processing is taking a bit longer
       if (session.state === 'PROCESSING') {
         log('Sending processing delay nudge');
-        const { msgProcessingDelay } = await import('@whatsads/session');
+        const { msgProcessingDelay } = await import('@autmn/session');
         await wa.sendText(data.phoneNumber, msgProcessingDelay(lang));
       } else {
         // Generic inactivity nudge for other states
@@ -103,7 +103,7 @@ export async function processSessionTimeout(job: Job): Promise<void> {
         return;
       }
 
-      const resolvedImageCount = data.expectedImageCount ?? session.imageStorageUrls.length;
+      const resolvedImageCount = data.expectedImageCount ?? 0;
       console.log(JSON.stringify({
         job: job.id,
         phoneNumber: data.phoneNumber,
@@ -114,7 +114,7 @@ export async function processSessionTimeout(job: Job): Promise<void> {
         earlyPhotoMediaId: session.earlyPhotoMediaId,
       }));
 
-      const { onPhotoBatchTimeout } = await import('@whatsads/session');
+      const { onPhotoBatchTimeout } = await import('@autmn/session');
       await onPhotoBatchTimeout(
         data.phoneNumber,
         resolvedImageCount,
@@ -135,7 +135,7 @@ export async function processSessionTimeout(job: Job): Promise<void> {
       }
 
       const nudgeImageCount = data.expectedImageCount ?? session.imageStorageUrls.length;
-      const { onPhotoBatchTimeout: onNudge } = await import('@whatsads/session');
+      const { onPhotoBatchTimeout: onNudge } = await import('@autmn/session');
       await onNudge(
         data.phoneNumber,
         nudgeImageCount,

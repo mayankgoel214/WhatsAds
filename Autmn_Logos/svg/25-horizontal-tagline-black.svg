@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="140" viewBox="0 0 560 140">
+  <rect width="560" height="140" fill="white"/>
+  <g transform="translate(40, 16)">
+    <g>
+      <circle cx="18.0" cy="36.0" r="7.2" fill="#111111"/>
+      <circle cx="54.0" cy="14.4" r="7.2" fill="#111111"/>
+      <circle cx="54.0" cy="57.6" r="7.2" fill="#111111"/>
+      <circle cx="90.0" cy="36.0" r="9.9" fill="#111111"/>
+      <line x1="25.2" y1="32.4" x2="46.800000000000004" y2="18.0" stroke="#111111" stroke-width="2.8800000000000003"/>
+      <line x1="25.2" y1="39.6" x2="46.800000000000004" y2="54.0" stroke="#111111" stroke-width="2.8800000000000003"/>
+      <line x1="61.2" y1="18.0" x2="81.0" y2="32.4" stroke="#111111" stroke-width="2.8800000000000003"/>
+      <line x1="61.2" y1="54.0" x2="81.0" y2="39.6" stroke="#111111" stroke-width="2.8800000000000003"/>
+    </g>
+  </g>
+  <text x="160" y="62" font-family="Manrope, Arial, Helvetica, sans-serif" font-weight="700" font-size="44" fill="#111111" letter-spacing="-1.2">autmn</text>
+  <text x="348" y="62" font-family="Manrope, Arial, Helvetica, sans-serif" font-weight="300" font-size="44" fill="#111111" letter-spacing="-1.2">.ai</text>
+  <line x1="160" y1="80" x2="420" y2="80" stroke="#111111" stroke-width="0.5" opacity="0.2"/>
+  <text x="160" y="102" font-family="Manrope, Arial, Helvetica, sans-serif" font-weight="400" font-size="16" fill="#111111" letter-spacing="3" opacity="0.45">AUTONOMOUS AUTOMATION</text>
+</svg>

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#0a0a0a"/>
+  <g transform="translate(420, 180)">
+    <g>
+      <circle cx="40.0" cy="80.0" r="16.0" fill="#ffffff"/>
+      <circle cx="120.0" cy="32.0" r="16.0" fill="#ffffff"/>
+      <circle cx="120.0" cy="128.0" r="16.0" fill="#ffffff"/>
+      <circle cx="200.0" cy="80.0" r="22.0" fill="#ffffff"/>
+      <line x1="56.0" y1="72.0" x2="104.0" y2="40.0" stroke="#ffffff" stroke-width="6.4"/>
+      <line x1="56.0" y1="88.0" x2="104.0" y2="120.0" stroke="#ffffff" stroke-width="6.4"/>
+      <line x1="136.0" y1="40.0" x2="180.0" y2="72.0" stroke="#ffffff" stroke-width="6.4"/>
+      <line x1="136.0" y1="120.0" x2="180.0" y2="88.0" stroke="#ffffff" stroke-width="6.4"/>
+    </g>
+  </g>
+  <text x="600" y="400" font-family="Manrope, Arial, Helvetica, sans-serif" font-weight="700" font-size="72" fill="#ffffff" text-anchor="middle" letter-spacing="-2">autmn</text>
+  <text x="600" y="460" font-family="Manrope, Arial, Helvetica, sans-serif" font-weight="300" font-size="36" fill="#666666" text-anchor="middle" letter-spacing="1">.ai</text>
+</svg>

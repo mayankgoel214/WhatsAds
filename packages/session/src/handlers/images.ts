@@ -13,16 +13,16 @@
  * Free trial if user.orderCount === 0.
  */
 
-import type { WhatsAppClient } from '@whatsads/whatsapp';
-import { prisma } from '@whatsads/db';
-import type { Session, User } from '@whatsads/db';
-import { uploadFile, Buckets } from '@whatsads/storage';
+import type { WhatsAppClient } from '@autmn/whatsapp';
+import { prisma } from '@autmn/db';
+import type { Session, User } from '@autmn/db';
+import { uploadFile, Buckets } from '@autmn/storage';
 
-import { msgPhotoReadyForProcessing, msgGenericError, msgUnknownMessage } from '../messages.js';
+import { msgPhotoReadyForProcessing, msgGenericError, msgUnknownMessage, msgAnySpecialInstructions, msgInstructionsAck, msgSendPhotoShort, msgPhotoBeforeInstructions, btnStart, btnAddInstructions, msgDoneOrInstructions } from '../messages.js';
 import { MAX_IMAGES_PER_ORDER, PHOTO_BATCH_TIMEOUT_SECONDS, PHOTO_NUDGE_TIMEOUT_SECONDS } from '../types.js';
 import { transitionTo } from '../db-helpers.js';
 import { logger } from '../logger.js';
-import type { MessageContext } from '../types.js';
+import type { MessageContext, Language } from '../types.js';
 import {
   createOrderAndSendPayment,
   downloadWhatsAppMedia,
@@ -39,7 +39,7 @@ export async function handleAwaitingPhoto(
   message: MessageContext,
   wa: WhatsAppClient,
 ): Promise<void> {
-  const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
+  const lang = (user.language as Language) || 'hinglish';
   const phoneNumber = session.phoneNumber;
 
   console.info(JSON.stringify({
@@ -92,12 +92,7 @@ export async function handleAwaitingPhoto(
         where: { phoneNumber },
         data: { earlyPhotoMediaId: 'awaiting_instructions' },
       });
-      await wa.sendText(
-        phoneNumber,
-        lang === 'hi'
-          ? 'Kuch special instructions? Text ya voice note bhejein.'
-          : 'Any special instructions? Send text or a voice note.',
-      );
+      await wa.sendText(phoneNumber, msgAnySpecialInstructions(lang));
       return;
     }
 
@@ -114,7 +109,7 @@ export async function handleAwaitingPhoto(
         }
         return;
       }
-      await wa.sendText(phoneNumber, lang === 'hi' ? 'Photo bhejiye!' : 'Send your photo!');
+      await wa.sendText(phoneNumber, msgSendPhotoShort(lang));
       return;
     }
     if (message.buttonReplyId === ButtonIds.NEW_STYLE) {
@@ -272,15 +267,15 @@ export async function handleAwaitingPhoto(
           console.error(JSON.stringify({ event: 'missing_whatsapp_access_token' }));
           throw new Error('WHATSAPP_ACCESS_TOKEN is not configured');
         }
-        const { downloadMedia } = await import('@whatsads/whatsapp');
+        const { downloadMedia } = await import('@autmn/whatsapp');
         const { buffer, mimeType } = await downloadMedia(message.mediaId, accessToken);
-        const { uploadFile: upload, Buckets: B } = await import('@whatsads/storage');
+        const { uploadFile: upload, Buckets: B } = await import('@autmn/storage');
         await upload(B.VOICE_NOTES, `${phoneNumber}/${Date.now()}.ogg`, buffer, mimeType);
-        const { transcribeVoiceNote } = await import('@whatsads/ai');
+        const { transcribeVoiceNote } = await import('@autmn/ai');
         const transcript = await transcribeVoiceNote(buffer, mimeType);
         if (transcript.text) {
           await prisma.session.update({ where: { phoneNumber }, data: { voiceInstructions: transcript.text.slice(0, 500) } });
-          await wa.sendText(phoneNumber, lang === 'hi' ? `Samajh gaya: "${transcript.text}"\nShuru karte hain!` : `Got it: "${transcript.text}"\nLet's go!`);
+          await wa.sendText(phoneNumber, msgInstructionsAck(lang, transcript.text));
         }
         const freshSession = await prisma.session.findUnique({ where: { phoneNumber } });
         if (freshSession) await advanceToPayment(freshSession, user, wa, lang);
@@ -364,7 +359,7 @@ export async function handleAwaitingPhoto(
     // Any other text while collecting photos — might be instructions sent early
     await wa.sendText(
       phoneNumber,
-      lang === 'hi' ? 'Pehle photo bhejiye, phir instructions dena.' : 'Send your photo first, then instructions.',
+      msgPhotoBeforeInstructions(lang),
     );
     return;
   }
@@ -420,7 +415,7 @@ export async function onPhotoBatchTimeout(
   const user = await prisma.user.findUnique({ where: { phoneNumber } });
   if (!user) return;
 
-  const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
+  const lang = (user.language as Language) || 'hinglish';
   const imageCount = (session.imageStorageUrls as string[]).length;
 
   // Self-healing for stale order_creating
@@ -489,7 +484,7 @@ export async function onPhotoBatchTimeout(
 async function showPhotoButtons(
   phoneNumber: string,
   imageCount: number,
-  lang: 'hi' | 'en',
+  lang: Language,
   wa: WhatsAppClient,
 ): Promise<void> {
   const countMsg = lang === 'hi'
@@ -498,11 +493,11 @@ async function showPhotoButtons(
 
   try {
     await wa.sendButtons(phoneNumber, countMsg, [
-      { id: 'process_now', title: lang === 'hi' ? 'Shuru karein' : 'Start' },
-      { id: 'add_instructions', title: lang === 'hi' ? 'Instructions' : 'Add instructions' },
+      { id: 'process_now', title: btnStart(lang) },
+      { id: 'add_instructions', title: btnAddInstructions(lang) },
     ]);
   } catch {
-    await wa.sendText(phoneNumber, `${countMsg}\n\n${lang === 'hi' ? '"done" bolein ya instructions bhejein.' : 'Say "done" or send instructions.'}`);
+    await wa.sendText(phoneNumber, `${countMsg}\n\n${msgDoneOrInstructions(lang)}`);
   }
 
   // Update earlyPhotoMediaId to track that buttons were shown
@@ -523,7 +518,7 @@ async function advanceToPayment(
   session: Session,
   user: User,
   wa: WhatsAppClient,
-  lang: 'hi' | 'en',
+  lang: Language,
 ): Promise<void> {
   if (session.imageStorageUrls.length === 0) return;
 
@@ -631,7 +626,7 @@ async function schedulePhotoBatchDebounce(
   imageCount: number,
 ): Promise<void> {
   try {
-    const { getSessionTimeoutQueue } = await import('@whatsads/queue');
+    const { getSessionTimeoutQueue } = await import('@autmn/queue');
     const sessionTimeoutQueue = getSessionTimeoutQueue();
 
     const jobId = `photo_debounce_${phoneNumber}_${Date.now()}`;
@@ -673,7 +668,7 @@ async function schedulePhotoNudge(
   imageCount: number,
 ): Promise<void> {
   try {
-    const { getSessionTimeoutQueue } = await import('@whatsads/queue');
+    const { getSessionTimeoutQueue } = await import('@autmn/queue');
     const sessionTimeoutQueue = getSessionTimeoutQueue();
 
     await sessionTimeoutQueue.add(

@@ -14,7 +14,7 @@ COPY packages/payment/package.json   ./packages/payment/
 COPY packages/storage/package.json   ./packages/storage/
 COPY apps/api/package.json           ./apps/api/
 
-RUN pnpm install --frozen-lockfile --filter @whatsads/api...
+RUN pnpm install --frozen-lockfile --filter @autmn/api...
 
 # ─── Stage 2: build ───────────────────────────────────────────────────────────
 FROM deps AS builder
@@ -28,13 +28,13 @@ COPY packages/storage/  ./packages/storage/
 COPY apps/api/          ./apps/api/
 
 # Generate Prisma client then build dependency packages, then api
-RUN pnpm --filter @whatsads/db build
-RUN pnpm --filter @whatsads/queue build
-RUN pnpm --filter @whatsads/whatsapp build
-RUN pnpm --filter @whatsads/session build
-RUN pnpm --filter @whatsads/payment build
-RUN pnpm --filter @whatsads/storage build
-RUN pnpm --filter @whatsads/api build
+RUN pnpm --filter @autmn/db build
+RUN pnpm --filter @autmn/queue build
+RUN pnpm --filter @autmn/whatsapp build
+RUN pnpm --filter @autmn/session build
+RUN pnpm --filter @autmn/payment build
+RUN pnpm --filter @autmn/storage build
+RUN pnpm --filter @autmn/api build
 
 # ─── Stage 3: runner ──────────────────────────────────────────────────────────
 FROM node:22-alpine AS runner
@@ -52,7 +52,7 @@ COPY packages/payment/package.json   ./packages/payment/
 COPY packages/storage/package.json   ./packages/storage/
 COPY apps/api/package.json           ./apps/api/
 
-RUN pnpm install --frozen-lockfile --filter @whatsads/api... --prod
+RUN pnpm install --frozen-lockfile --filter @autmn/api... --prod
 
 # Copy compiled output from builder
 COPY --from=builder /app/packages/db/dist        ./packages/db/dist

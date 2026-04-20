@@ -10,9 +10,9 @@
  *   - Increments User.orderCount
  */
 
-import type { WhatsAppClient } from '@whatsads/whatsapp';
-import { prisma } from '@whatsads/db';
-import type { Session, User } from '@whatsads/db';
+import type { WhatsAppClient } from '@autmn/whatsapp';
+import { prisma } from '@autmn/db';
+import type { Session, User } from '@autmn/db';
 import { transitionTo } from '../db-helpers.js';
 import { handleAwaitingEdit } from './edit.js';
 import {
@@ -23,7 +23,8 @@ import {
   msgWhichAdToChange,
   styleDisplayName,
 } from '../messages.js';
-import { ButtonIds } from '../types.js';
+import { ButtonIds, FREE_REDOS_PER_STYLE, OUTPUT_STYLES_PER_ORDER } from '../types.js';
+import type { Language } from '../types.js';
 import type { MessageContext } from '../types.js';
 import { logger } from '../logger.js';
 
@@ -39,7 +40,7 @@ const STYLE_EMOJI: Record<string, string> = {
   style_outdoor: '🌳',
   style_festive: '🎉',
   style_with_model: '👤',
-  style_clickkar_special: '✨',
+  style_autmn_special: '✨',
   style_video_shoot: '🎬',
 };
 
@@ -50,7 +51,7 @@ const STYLE_EMOJI: Record<string, string> = {
 export async function sendProcessedImages(
   phoneNumber: string,
   outputImageUrls: string[],
-  language: 'hi' | 'en',
+  language: Language,
   userName: string | undefined,
   wa: WhatsAppClient,
   videoUrls?: string[],
@@ -83,36 +84,6 @@ export async function sendProcessedImages(
     }
   }
 
-  // Send video ads if available
-  if (videoUrls && videoUrls.length > 0) {
-    await sleep(1000);
-    const videoCaption =
-      language === 'hi'
-        ? 'Bonus! Aapka video ad bhi ready hai — WhatsApp Status ke liye perfect! 🎬'
-        : 'Bonus! Your video ad is ready too — perfect for WhatsApp Status! 🎬';
-    for (const vUrl of videoUrls) {
-      try {
-        await wa.sendVideo(phoneNumber, vUrl, videoCaption);
-      } catch (videoErr) {
-        logger.warn('Failed to send video ad', {
-          phoneNumber,
-          error: videoErr instanceof Error ? videoErr.message : String(videoErr),
-        });
-      }
-    }
-  }
-
-  // Story format disabled for now
-  // if (storyUrls && storyUrls.length > 0) {
-  //   await sleep(1000);
-  //   for (const sUrl of storyUrls) {
-  //     const storyCaption = language === 'hi'
-  //       ? 'Story format (9:16) — Instagram Stories & WhatsApp Status ke liye!'
-  //       : 'Story format (9:16) — perfect for Instagram Stories & WhatsApp Status!';
-  //     await wa.sendImage(phoneNumber, sUrl, storyCaption);
-  //   }
-  // }
-
   // Re-check that ALL jobs for this order are truly complete before showing
   // feedback buttons. This prevents showing buttons prematurely when another
   // job finishes and delivers its image AFTER the buttons were already sent.
@@ -138,13 +109,13 @@ export async function sendProcessedImages(
   await sleep(1000);
   try {
     await wa.sendButtons(phoneNumber, msgAskFeedback(language), [
-      { id: ButtonIds.FEEDBACK_GREAT, title: language === 'hi' ? 'Love it! ❤️' : 'Love it! ❤️' },
-      { id: ButtonIds.CHANGE_SOMETHING, title: language === 'hi' ? 'Change something' : 'Change something' },
+      { id: ButtonIds.FEEDBACK_GREAT, title: language === 'hinglish' ? 'Love it! ❤️' : 'Love it! ❤️' },
+      { id: ButtonIds.CHANGE_SOMETHING, title: language === 'hinglish' ? 'Change something' : 'Change something' },
     ]);
   } catch {
     await wa.sendText(
       phoneNumber,
-      language === 'hi'
+      language === 'hinglish'
         ? `${msgAskFeedback(language)}\n\n1. Love it!\n2. Change something`
         : `${msgAskFeedback(language)}\n\n1. Love it!\n2. Change something`,
     );
@@ -161,7 +132,7 @@ export async function handleDelivered(
   message: MessageContext,
   wa: WhatsAppClient,
 ): Promise<void> {
-  const lang = (user.language as 'hi' | 'en') || 'hi';
+  const lang = (user.language as Language) || 'hinglish';
 
   if (message.messageType === 'interactive') {
     // Handle feedback buttons
@@ -195,23 +166,83 @@ export async function handleDelivered(
         case ButtonIds.REDO_STYLE_0:
         case ButtonIds.REDO_STYLE_1:
         case ButtonIds.REDO_STYLE_2: {
-          const styleIndexMap: Record<string, number> = {
-            [ButtonIds.REDO_STYLE_0]: 0,
-            [ButtonIds.REDO_STYLE_1]: 1,
-            [ButtonIds.REDO_STYLE_2]: 2,
-          };
-          const selectedIndex = styleIndexMap[message.buttonReplyId!]!;
-          // Store the selected style index as a string flag in earlyPhotoMediaId
-          // so the edit handler knows which ImageJob to redo.
-          await transitionTo(session.phoneNumber, 'DELIVERED', {
-            earlyPhotoMediaId: `redo_style_index:${selectedIndex}`,
+          const styleIndex = message.buttonReplyId === ButtonIds.REDO_STYLE_0 ? 0
+            : message.buttonReplyId === ButtonIds.REDO_STYLE_1 ? 1
+            : 2;
+
+          const order = session.currentOrderId
+            ? await prisma.order.findUnique({ where: { id: session.currentOrderId } })
+            : null;
+
+          if (!order || !(order.stylesOrdered as string[]).length || (order.stylesOrdered as string[]).length <= styleIndex) {
+            await wa.sendText(session.phoneNumber, lang === 'hinglish' ? 'Kuch problem aayi.' : 'Something went wrong.');
+            return;
+          }
+
+          const targetStyle = (order.stylesOrdered as string[])[styleIndex]!;
+          const inputImageUrl = order.primaryInputImageUrl ?? (order.inputImageUrls as string[])[0];
+
+          if (!inputImageUrl) {
+            await wa.sendText(session.phoneNumber, lang === 'hinglish' ? 'Photo nahi mili.' : 'Could not find the original photo.');
+            return;
+          }
+
+          // Check revision limit
+          const totalFreeRedos = (order.outputStyleCount || (order.stylesOrdered as string[]).length || OUTPUT_STYLES_PER_ORDER) * FREE_REDOS_PER_STYLE;
+          if (order.revisionsUsed >= totalFreeRedos) {
+            await wa.sendText(session.phoneNumber, lang === 'hinglish'
+              ? 'Aapke free edits khatam ho gaye.'
+              : "You've used your free edits.");
+            return;
+          }
+
+          // Create a single ImageJob for the redo
+          const imageJob = await prisma.imageJob.create({
+            data: {
+              orderId: order.id,
+              inputImageUrl,
+              style: targetStyle,
+              styleIndex,
+              pipeline: 'primary',
+              status: 'queued',
+            },
           });
-          await handleAwaitingEdit(
-            { ...session, earlyPhotoMediaId: `redo_style_index:${selectedIndex}` },
-            user,
-            { ...message, listReplyId: 'edit_style', buttonReplyId: undefined },
-            wa,
-          );
+
+          // Increment revision count and mark as processing
+          await prisma.order.update({
+            where: { id: order.id },
+            data: {
+              revisionsUsed: { increment: 1 },
+              status: 'processing',
+              processingStartedAt: new Date(),
+              processingCompletedAt: null,
+            },
+          });
+
+          // Enqueue the single redo job
+          const { getImageQueue } = await import('@autmn/queue');
+          const imageQueue = getImageQueue();
+          await imageQueue.add('process_image', {
+            orderId: order.id,
+            imageJobId: imageJob.id,
+            phoneNumber: session.phoneNumber,
+            inputImageUrl,
+            style: targetStyle,
+            voiceInstructions: (order.voiceInstructions as string | null) ?? undefined,
+            productCategory: (order.productCategory as string | null) ?? undefined,
+            pipeline: 'primary',
+          });
+
+          // Transition to EDIT_PROCESSING
+          await transitionTo(session.phoneNumber, 'EDIT_PROCESSING', {
+            currentOrderId: order.id,
+          });
+
+          const styleName = styleDisplayName(targetStyle, lang);
+          await wa.sendText(session.phoneNumber, lang === 'hinglish'
+            ? `${styleName} dubara ban raha hai... thodi der mein ready!`
+            : `Redoing your ${styleName} ad... almost ready!`);
+
           return;
         }
 
@@ -344,7 +375,7 @@ async function handleLoveIt(
   session: Session,
   user: User,
   wa: WhatsAppClient,
-  lang: 'hi' | 'en',
+  lang: Language,
 ): Promise<void> {
   const isFirstOrder = user.orderCount === 0;
   await wa.sendText(session.phoneNumber, msgThankYou(lang, isFirstOrder));
@@ -391,7 +422,7 @@ async function handleMakeChange(
   session: Session,
   _user: User,
   wa: WhatsAppClient,
-  lang: 'hi' | 'en',
+  lang: Language,
 ): Promise<void> {
   // For 3-style orders: ask which style output to change using buttons (max 3).
   // For single-style orders: show the standard edit list.
@@ -428,17 +459,17 @@ async function handleMakeChange(
   try {
     await wa.sendList(
       session.phoneNumber,
-      lang === 'hi' ? 'Kya badlana hai?' : 'What would you like to change?',
-      lang === 'hi' ? 'Badlao chunein' : 'Pick a change',
+      lang === 'hinglish' ? 'Kya badlana hai?' : 'What would you like to change?',
+      lang === 'hinglish' ? 'Badlao chunein' : 'Pick a change',
       [
         {
-          title: lang === 'hi' ? 'Options' : 'Options',
+          title: lang === 'hinglish' ? 'Options' : 'Options',
           rows: [
-            { id: 'edit_background', title: lang === 'hi' ? 'Background badlo' : 'Change background', description: lang === 'hi' ? 'Naya background lagayein' : 'Apply a new background' },
-            { id: 'edit_lighting', title: lang === 'hi' ? 'Roshni adjust karein' : 'Adjust lighting', description: lang === 'hi' ? 'Bright ya dark karein' : 'Brighter or darker' },
-            { id: 'edit_style', title: lang === 'hi' ? 'Style badlein' : 'Change style', description: lang === 'hi' ? 'Poori style badal dein' : 'Change the whole style' },
-            { id: 'edit_crop', title: lang === 'hi' ? 'Product zoom' : 'Zoom product', description: lang === 'hi' ? 'Product bada dikhayein' : 'Make product bigger' },
-            { id: 'edit_other', title: lang === 'hi' ? 'Kuch aur' : 'Something else', description: lang === 'hi' ? 'Text ya voice note bhejein' : 'Send text or voice note' },
+            { id: 'edit_background', title: lang === 'hinglish' ? 'Background badlo' : 'Change background', description: lang === 'hinglish' ? 'Naya background lagayein' : 'Apply a new background' },
+            { id: 'edit_lighting', title: lang === 'hinglish' ? 'Roshni adjust karein' : 'Adjust lighting', description: lang === 'hinglish' ? 'Bright ya dark karein' : 'Brighter or darker' },
+            { id: 'edit_style', title: lang === 'hinglish' ? 'Style badlein' : 'Change style', description: lang === 'hinglish' ? 'Poori style badal dein' : 'Change the whole style' },
+            { id: 'edit_crop', title: lang === 'hinglish' ? 'Product zoom' : 'Zoom product', description: lang === 'hinglish' ? 'Product bada dikhayein' : 'Make product bigger' },
+            { id: 'edit_other', title: lang === 'hinglish' ? 'Kuch aur' : 'Something else', description: lang === 'hinglish' ? 'Text ya voice note bhejein' : 'Send text or voice note' },
           ],
         },
       ],
@@ -446,7 +477,7 @@ async function handleMakeChange(
   } catch {
     await wa.sendText(
       session.phoneNumber,
-      lang === 'hi'
+      lang === 'hinglish'
         ? 'Kya badlana hai? Reply karein:\n1. Background\n2. Roshni\n3. Style\n4. Zoom\n5. Kuch aur'
         : 'What to change? Reply:\n1. Background\n2. Lighting\n3. Style\n4. Zoom product\n5. Something else',
     );
@@ -460,14 +491,14 @@ async function handleStartOver(
   session: Session,
   _user: User,
   wa: WhatsAppClient,
-  lang: 'hi' | 'en',
+  lang: Language,
 ): Promise<void> {
   await wa.sendButtons(
     session.phoneNumber,
-    lang === 'hi' ? 'Kaunsi photo use karein?' : 'Which photo would you like to use?',
+    lang === 'hinglish' ? 'Kaunsi photo use karein?' : 'Which photo would you like to use?',
     [
-      { id: 'reuse_photo', title: lang === 'hi' ? 'Wahi photo' : 'Same photo' },
-      { id: 'new_photo', title: lang === 'hi' ? 'Nayi photo' : 'New photo' },
+      { id: 'reuse_photo', title: lang === 'hinglish' ? 'Wahi photo' : 'Same photo' },
+      { id: 'new_photo', title: lang === 'hinglish' ? 'Nayi photo' : 'New photo' },
     ],
   );
 }

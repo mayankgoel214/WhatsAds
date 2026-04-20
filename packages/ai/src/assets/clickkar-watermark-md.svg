@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="160" height="44" viewBox="0 0 160 44">
-  <g opacity="0.8">
-    <path d="M8 36 A16 16 0 0 1 8 14" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"/>
-    <path d="M8 14 L8 24 L18 14" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M8 24 L18 36" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"/>
-    <line x1="24" y1="10" x2="24" y2="38" stroke="#EF9F27" stroke-width="1" opacity="0.8"/>
-    <text x="30" y="28" font-family="Arial,Helvetica,sans-serif" font-weight="600" font-size="15" fill="white" letter-spacing="-0.2">clickkar</text>
-  </g>
-</svg>

@@ -58,8 +58,8 @@ EXCEPTION: Photos/artwork of people PRINTED ON the product surface (photo mugs, 
 - Is there any random/generated text in the SCENE/BACKGROUND that is NOT on the product?
 - ANY text, images, artwork, photos, or designs that are physically PRINTED ON or PART OF the product surface are fine — this includes product labels, brand names, custom text, photo collages, decorative patterns, names, dates, quotes, and any printed imagery on mugs, t-shirts, phone cases, greeting cards, posters, etc.
 - Generated text like "8K", "QUALITY", watermarks, gibberish = INSTANT FAIL
-- EXCEPTION: The small Clickkar logo watermark at the bottom-right corner of the image is INTENTIONAL branding. IGNORE it completely.
-- hasRandomText = true ONLY for scene/background text, not product text, and NOT for the Clickkar watermark
+- EXCEPTION: The small Autmn logo watermark at the bottom-right corner of the image is INTENTIONAL branding. IGNORE it completely.
+- hasRandomText = true ONLY for scene/background text, not product text, and NOT for the Autmn watermark
 
 ## 2. SKETCHES/DRAWINGS CHECK (auto-fail if found)
 - Any line drawings, sketches, illustrations, or cartoon elements? = INSTANT FAIL
@@ -165,7 +165,7 @@ EXCEPTION: Photos/artwork of people PRINTED ON the product surface (photo mugs, 
 ## 1. RANDOM TEXT CHECK (auto-fail if found)
 - Any random/generated text in the SCENE/BACKGROUND? (ANY text, images, artwork, or designs PRINTED ON or PART OF the product surface are fine — product labels, custom text, photo collages, decorative patterns, etc. Only flag text floating in the background scene.)
 - "8K", "QUALITY", watermarks, gibberish = INSTANT FAIL
-- EXCEPTION: The small Clickkar logo watermark at the bottom-right corner of the image is INTENTIONAL branding. IGNORE it completely.
+- EXCEPTION: The small Autmn logo watermark at the bottom-right corner of the image is INTENTIONAL branding. IGNORE it completely.
 
 ## 2. SKETCHES/DRAWINGS CHECK (auto-fail if found)
 - Any line drawings, sketches, illustrations, or cartoon elements?

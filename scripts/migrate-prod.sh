@@ -13,7 +13,7 @@ if [[ -z "${DATABASE_URL:-}" ]] || [[ -z "${DIRECT_URL:-}" ]]; then
 fi
 
 echo "Running Prisma migrate deploy against production..."
-pnpm --filter @whatsads/db exec prisma migrate deploy
+pnpm --filter @autmn/db exec prisma migrate deploy
 
 echo "Done. Current migration status:"
-pnpm --filter @whatsads/db exec prisma migrate status
+pnpm --filter @autmn/db exec prisma migrate status

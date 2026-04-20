@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="120" viewBox="0 0 560 120">
+  <rect width="560" height="120" fill="none"/>
+  <g transform="translate(40, 20)">
+    <g>
+      <circle cx="18.0" cy="36.0" r="7.2" fill="#111111"/>
+      <circle cx="54.0" cy="14.4" r="7.2" fill="#111111"/>
+      <circle cx="54.0" cy="57.6" r="7.2" fill="#111111"/>
+      <circle cx="90.0" cy="36.0" r="9.9" fill="#111111"/>
+      <line x1="25.2" y1="32.4" x2="46.800000000000004" y2="18.0" stroke="#111111" stroke-width="2.8800000000000003"/>
+      <line x1="25.2" y1="39.6" x2="46.800000000000004" y2="54.0" stroke="#111111" stroke-width="2.8800000000000003"/>
+      <line x1="61.2" y1="18.0" x2="81.0" y2="32.4" stroke="#111111" stroke-width="2.8800000000000003"/>
+      <line x1="61.2" y1="54.0" x2="81.0" y2="39.6" stroke="#111111" stroke-width="2.8800000000000003"/>
+    </g>
+  </g>
+  <text x="160" y="72" font-family="Manrope, Arial, Helvetica, sans-serif" font-weight="700" font-size="48" fill="#111111" letter-spacing="-1.2">autmn</text>
+  <text x="358" y="72" font-family="Manrope, Arial, Helvetica, sans-serif" font-weight="300" font-size="48" fill="#111111" letter-spacing="-1.2">.ai</text>
+</svg>

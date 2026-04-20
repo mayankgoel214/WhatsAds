@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { prisma } from '@whatsads/db';
-import { getRedisConnection } from '@whatsads/queue';
+import { prisma } from '@autmn/db';
+import { getRedisConnection } from '@autmn/queue';
 
 export async function healthRoutes(app: FastifyInstance): Promise<void> {
   // Lightweight liveness probe — Railway uses this to know the process is up

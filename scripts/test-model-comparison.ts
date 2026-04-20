@@ -2,7 +2,7 @@
  * Head-to-head model comparison test.
  * Runs the same product images through 5 different models and saves results.
  *
- * Run: cd /Users/lending/Clickkar && npx tsx scripts/test-model-comparison.ts
+ * Run: cd /Users/lending/Autmn && npx tsx scripts/test-model-comparison.ts
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
@@ -20,10 +20,10 @@ function loadEnv(envPath: string): void {
     process.env[trimmed.slice(0, eqIndex).trim()] = trimmed.slice(eqIndex + 1).trim();
   }
 }
-loadEnv(resolve('/Users/lending/Clickkar/.env'));
+loadEnv(resolve('/Users/lending/Autmn/.env'));
 
 // Import fal from the AI package's node_modules (pnpm hoisting)
-const { fal } = await import('/Users/lending/Clickkar/packages/ai/node_modules/@fal-ai/client/src/index.js') as { fal: any }; // eslint-disable-line
+const { fal } = await import('/Users/lending/Autmn/packages/ai/node_modules/@fal-ai/client/src/index.js') as { fal: any }; // eslint-disable-line
 
 fal.config({ credentials: process.env['FAL_KEY'] ?? '' });
 
@@ -259,9 +259,9 @@ async function main() {
     results: results.map(r => ({ model: r.name, url: r.url, durationMs: r.durationMs, cost: r.cost, error: r.error })),
   }));
 
-  mkdirSync('/Users/lending/Clickkar/scripts/results', { recursive: true });
+  mkdirSync('/Users/lending/Autmn/scripts/results', { recursive: true });
   writeFileSync(
-    '/Users/lending/Clickkar/scripts/results/model-comparison.json',
+    '/Users/lending/Autmn/scripts/results/model-comparison.json',
     JSON.stringify(summary, null, 2),
   );
   console.log('\nResults saved to scripts/results/model-comparison.json');

@@ -166,7 +166,7 @@ function getStyleDirection(style: string): string {
     style_festive: 'Indian festival celebration — diyas, marigolds, rangoli, brass elements, silk fabric. Warm golden-amber tones (2700-3200K). Multiple warm light sources creating layered bokeh.',
     style_minimal: '60-70% intentional negative space. Rule of thirds placement. ONE hard directional light creating a long dramatic shadow. Zero props.',
     style_with_model: 'Person actively holding/wearing/using the product in a natural setting. Shallow DOF, editorial lifestyle feel.',
-    style_clickkar_special: 'Full creative freedom — choose the single most compelling, scroll-stopping direction for this specific product. Think beyond templates: unexpected settings, bold cinematic lighting, dynamic energy, emotional storytelling. The product is the undeniable hero.',
+    style_autmn_special: 'Full creative freedom — choose the single most compelling, scroll-stopping direction for this specific product. Think beyond templates: unexpected settings, bold cinematic lighting, dynamic energy, emotional storytelling. The product is the undeniable hero.',
   };
   return directions[style] ?? directions['style_lifestyle']!;
 }
@@ -346,7 +346,7 @@ export async function processProductImageV3(
       style_festive: 'Shot on Canon EOS R5, 85mm f/1.4L, ISO 400. Multiple warm light sources (diyas, fairy lights) creating layered golden bokeh circles at different depths. Warm film-like rendering.',
       style_minimal: 'Shot on Hasselblad X2D 100C, 120mm f/4, ISO 64. Single hard light source. Clinical sharpness. Architectural precision. The shadow cast is as important as the product.',
       style_with_model: 'Shot on Canon EOS R5, 85mm f/1.4L, ISO 100. Shallow depth of field. Person and product sharp, background melting into bokeh. Warm, editorial fashion/lifestyle feel.',
-      style_clickkar_special: 'Shot on the perfect cinema camera for this specific product — the photographer selected the ideal focal length, aperture, and ISO to maximize emotional impact. The gear choices serve the story, not a template.',
+      style_autmn_special: 'Shot on the perfect cinema camera for this specific product — the photographer selected the ideal focal length, aperture, and ISO to maximize emotional impact. The gear choices serve the story, not a template.',
     };
     return specs[style] ?? specs['style_lifestyle']!;
   }

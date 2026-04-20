@@ -9,10 +9,10 @@
  * which looks up the session state and dispatches to the correct handler.
  */
 
-import type { WhatsAppClient } from '@whatsads/whatsapp';
-import { prisma } from '@whatsads/db';
+import type { WhatsAppClient } from '@autmn/whatsapp';
+import { prisma } from '@autmn/db';
 import { getSession, getOrCreateUser, transitionTo, checkAndMarkProcessed } from './db-helpers.js';
-import type { MessageContext } from './types.js';
+import type { MessageContext, Language } from './types.js';
 import { logger } from './logger.js';
 
 // Handlers
@@ -30,6 +30,8 @@ import { handleAwaitingEdit, handleEditProcessing } from './handlers/edit.js';
 import {
   msgProcessingStuck,
   msgGenericError,
+  msgLanguageSwitched,
+  msgLanguageAlreadySet,
 } from './messages.js';
 import { onRevisionPaymentConfirmed } from './handlers/payment.js';
 
@@ -78,11 +80,58 @@ export async function handleIncomingMessage(
 
   // 5a. Help intent — intercept before state routing
   if (isHelpIntent(message.text)) {
-    const lang = user.language === 'en' ? 'en' : 'hi';
-    const helpText = lang === 'hi'
-      ? `🙏 *Clickkar Help*\n\n📸 Product photo bhejein → AI professional ad banayega\n\n*Commands:*\n• "hi" — Naya order shuru karein\n• Photo bhejein — Ad banaye\n• Voice note — Instructions dein\n\n*Current status:* ${session.state === 'IDLE' ? 'Ready! Photo bhejein.' : session.state === 'PROCESSING' ? 'Aapka photo process ho raha hai...' : session.state === 'DELIVERED' ? 'Photo deliver ho gaya. Edit karein ya naya bhejein.' : 'Setup chal raha hai.'}`
-      : `🙏 *Clickkar Help*\n\n📸 Send a product photo → AI creates a professional ad\n\n*Commands:*\n• "hi" — Start a new order\n• Send a photo — Create an ad\n• Voice note — Give instructions\n\n*Current status:* ${session.state === 'IDLE' ? 'Ready! Send a photo.' : session.state === 'PROCESSING' ? 'Your photo is being processed...' : session.state === 'DELIVERED' ? 'Photo delivered. Edit or send a new one.' : 'Setting up your preferences.'}`;
+    const lang = (user.language === 'en' ? 'en' : user.language === 'hinglish' ? 'hinglish' : 'en') as Language;
+    const helpText = lang === 'hinglish'
+      ? `🙏 *Autmn Help*\n\n📸 Product photo bhejein → AI professional ad banayega\n\n*Commands:*\n• "hi" — Naya order shuru karein\n• Photo bhejein — Ad banaye\n• Voice note — Instructions dein\n• "hindi" / "english" — Bhasha badlein\n\n*Current status:* ${session.state === 'IDLE' ? 'Ready! Photo bhejein.' : session.state === 'PROCESSING' ? 'Aapka photo process ho raha hai...' : session.state === 'DELIVERED' ? 'Photo deliver ho gaya. Edit karein ya naya bhejein.' : 'Setup chal raha hai.'}`
+      : `🙏 *Autmn Help*\n\n📸 Send a product photo → AI creates a professional ad\n\n*Commands:*\n• "hi" — Start a new order\n• Send a photo — Create an ad\n• Voice note — Give instructions\n• "hindi" / "english" — Change language\n\n*Current status:* ${session.state === 'IDLE' ? 'Ready! Send a photo.' : session.state === 'PROCESSING' ? 'Your photo is being processed...' : session.state === 'DELIVERED' ? 'Photo delivered. Edit or send a new one.' : 'Setting up your preferences.'}`;
     await wa.sendText(phoneNumber, helpText);
+    return;
+  }
+
+  // 5b. Language switch intent — intercept before state routing
+  const langSwitch = isLanguageSwitch(message.text);
+  if (langSwitch !== null) {
+    const currentLang = user.language as Language;
+    if (currentLang === langSwitch) {
+      await wa.sendText(phoneNumber, msgLanguageAlreadySet(langSwitch));
+      return;
+    }
+
+    // Update user language in DB
+    await prisma.user.update({
+      where: { phoneNumber },
+      data: { language: langSwitch },
+    });
+    user.language = langSwitch; // update in-memory ref
+
+    // Acknowledge in the NEW language
+    await wa.sendText(phoneNumber, msgLanguageSwitched(langSwitch));
+
+    // For interactive states, re-send the current prompt in new language
+    const repromptStates = ['IDLE', 'SETUP_NAME', 'SETUP_CATEGORY', 'SETUP_STYLE', 'DELIVERED'];
+    if (repromptStates.includes(session.state)) {
+      const freshSession = await getSession(phoneNumber);
+      if (freshSession) {
+        switch (freshSession.state) {
+          case 'IDLE':
+            await handleIdle(freshSession, user, message, wa);
+            break;
+          case 'SETUP_NAME': {
+            const namePrompt = langSwitch === 'hinglish' ? 'Aapka naam bataiye?' : "What's your name?";
+            await wa.sendText(phoneNumber, namePrompt);
+            break;
+          }
+          case 'DELIVERED':
+            await handleDelivered(freshSession, user, message, wa);
+            break;
+          // SETUP_CATEGORY and SETUP_STYLE: acknowledgement is enough
+          default:
+            break;
+        }
+      }
+    }
+
+    logger.info('Language switched', { phoneNumber, newLang: langSwitch, state: session.state });
     return;
   }
 
@@ -237,13 +286,13 @@ export async function handleIncomingMessage(
             imageStorageUrls: [],
             earlyPhotoMediaId: null,
           });
-          const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
+          const lang = user.language as Language;
           await wa.sendText(phoneNumber, msgProcessingStuck(lang));
         } else {
-          const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
+          const lang = user.language as Language;
           await wa.sendText(
             phoneNumber,
-            lang === 'hi'
+            lang === 'hinglish'
               ? 'Aapki photo process ho rahi hai — bas thoda wait karein!'
               : 'Your photo is being processed — just a moment!',
           );
@@ -279,7 +328,7 @@ export async function handleIncomingMessage(
 
         if (editStuckMinutes > 5) {
           await transitionTo(phoneNumber, 'DELIVERED');
-          const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
+          const lang = user.language as Language;
           await wa.sendText(phoneNumber, msgProcessingStuck(lang));
         } else {
           await handleEditProcessing(session, user, message, wa);
@@ -325,8 +374,8 @@ export async function handleIncomingMessage(
 
         // Remind user we are waiting for payment
         {
-          const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
-          const waitMsg = lang === 'hi'
+          const lang = user.language as Language;
+          const waitMsg = lang === 'hinglish'
             ? 'Payment ka intezaar hai. Pay karne ke baad hum aapka edit process karenge.'
             : "Waiting for payment. We'll process your edit once payment is confirmed.";
           await wa.sendText(phoneNumber, waitMsg);
@@ -347,7 +396,7 @@ export async function handleIncomingMessage(
     });
 
     try {
-      const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
+      const lang = user.language as Language;
       await wa.sendText(phoneNumber, msgGenericError(lang));
     } catch {
       logger.error('Failed to send error message', { phoneNumber });
@@ -373,4 +422,40 @@ function isEscapeIntent(message: MessageContext): boolean {
   if (message.messageType !== 'text' || !message.text) return false;
   const text = message.text.trim().toLowerCase();
   return /^(hi|hello|hey|hii|hiii|namaste|naya|new|start|shuru|hlo|hlw|cancel|stop|reset|restart|start over|naya karo|band karo)\s*$/.test(text);
+}
+
+// ---------------------------------------------------------------------------
+// Language intent detection — lets users switch language at any point
+// ---------------------------------------------------------------------------
+
+function isLanguageSwitch(text: string | undefined): Language | null {
+  if (!text) return null;
+  const t = text.trim().toLowerCase();
+
+  // English
+  if (/^(english|angrezi|अंग्रेजी|अंग्रेज़ी|change to english|english mein|bhasha english)$/.test(t)) return 'en';
+  // Hindi (Devanagari)
+  if (/^(hindi|हिंदी|हिन्दी|देवनागरी|change to hindi|hindi mein|bhasha hindi)$/.test(t)) return 'hi';
+  // Hinglish (Roman-script Hindi)
+  if (/^(hinglish|roman hindi|hindi roman)$/.test(t)) return 'hinglish';
+  // Tamil
+  if (/^(tamil|தமிழ்|tamizh)$/.test(t)) return 'ta';
+  // Telugu
+  if (/^(telugu|తెలుగు)$/.test(t)) return 'te';
+  // Bengali
+  if (/^(bengali|bangla|বাংলা)$/.test(t)) return 'bn';
+  // Marathi
+  if (/^(marathi|मराठी)$/.test(t)) return 'mr';
+  // Gujarati
+  if (/^(gujarati|ગુજરાતી)$/.test(t)) return 'gu';
+  // Kannada
+  if (/^(kannada|ಕನ್ನಡ)$/.test(t)) return 'kn';
+  // Malayalam
+  if (/^(malayalam|മലയാളം)$/.test(t)) return 'ml';
+  // Punjabi
+  if (/^(punjabi|ਪੰਜਾਬੀ|panjabi)$/.test(t)) return 'pa';
+  // Odia
+  if (/^(odia|ଓଡ଼ିଆ|oriya)$/.test(t)) return 'or';
+
+  return null;
 }

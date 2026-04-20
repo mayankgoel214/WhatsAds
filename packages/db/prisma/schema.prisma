@@ -76,7 +76,7 @@ model User {
   id              String    @id @default(uuid()) @db.Uuid
   phoneNumber     String    @unique @map("phone_number")
   name            String?
-  language        String    @default("hi")
+  language        String    @default("hinglish")
   businessType    String?   @map("business_type")
   stylePreference String?   @map("style_preference")
   lastStyleUsed   String?   @map("last_style_used")

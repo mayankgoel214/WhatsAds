@@ -6,13 +6,14 @@
  * Style-change edit path (session.currentOrderId) is unchanged.
  */
 
-import type { WhatsAppClient } from '@whatsads/whatsapp';
-import type { Session, User } from '@whatsads/db';
-import { prisma } from '@whatsads/db';
-import { getImageQueue } from '@whatsads/queue';
+import type { WhatsAppClient } from '@autmn/whatsapp';
+import type { Session, User } from '@autmn/db';
+import { prisma } from '@autmn/db';
+import { getImageQueue } from '@autmn/queue';
 import { transitionTo } from '../db-helpers.js';
 import { styleDisplayName, msgRevisionLimitReached, msgStylePicked, msgAllStylesReady, msgSendProductPhotos, msgStylePackReady } from '../messages.js';
 import { ListIds, ButtonIds, FREE_REDOS_PER_STYLE, OUTPUT_STYLES_PER_ORDER } from '../types.js';
+import type { Language } from '../types.js';
 import type { MessageContext } from '../types.js';
 import { logger } from '../logger.js';
 
@@ -22,7 +23,7 @@ export async function handleSetupStyle(
   message: MessageContext,
   wa: WhatsAppClient,
 ): Promise<void> {
-  const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
+  const lang = user.language as Language;
   const phoneNumber = session.phoneNumber;
 
   let styleId: string | null = null;
@@ -133,7 +134,7 @@ export async function handleSetupStyle(
       // Style-change edit: reuse existing photos, enqueue reprocessing immediately
       await wa.sendText(
         phoneNumber,
-        lang === 'hi'
+        lang === 'hinglish'
           ? `*${styleName}* mein bana rahe hain — bas thoda wait karein!`
           : `Reprocessing in *${styleName}* — just a moment!`,
       );
@@ -141,61 +142,64 @@ export async function handleSetupStyle(
       const inputImageUrls = (order.inputImageUrls as string[]) ?? [];
       const cutoutUrls = (order.cutoutUrls as string[]) ?? [];
 
-      // A style-change reprocesses every image — each consumes one free redo,
-      // so increment revisionsUsed by the number of images being reprocessed.
+      // Style-change edit: reprocess EXACTLY 1 job using the primary input image.
+      // Using all images would create N jobs, delivering N outputs and confusing the user.
+      const primaryUrl = order.primaryInputImageUrl
+        ?? cutoutUrls[0]
+        ?? inputImageUrls[0]
+        ?? '';
+
+      if (!primaryUrl) {
+        await wa.sendText(phoneNumber, lang === 'hinglish' ? 'Photo nahi mili.' : 'Could not find the original photo.');
+        await transitionTo(phoneNumber, 'DELIVERED');
+        return;
+      }
+
+      const useCutout = !!cutoutUrls[0] && primaryUrl === cutoutUrls[0];
+
       await prisma.order.update({
         where: { id: order.id },
         data: {
           style: styleId,
-          revisionsUsed: { increment: inputImageUrls.length },
+          revisionsUsed: { increment: 1 },
           status: 'processing',
           processingStartedAt: new Date(),
           processingCompletedAt: null,
         },
       });
 
-      // Create an ImageJob and enqueue a processing job for EVERY image in the order
-      const queue = getImageQueue();
-      let jobsEnqueued = 0;
-
-      for (let i = 0; i < inputImageUrls.length; i++) {
-        const inputUrl = cutoutUrls[i] || inputImageUrls[i] || '';
-        if (!inputUrl) continue;
-
-        const editJobId = crypto.randomUUID();
-        await prisma.imageJob.create({
-          data: {
-            id: editJobId,
-            orderId: order.id,
-            inputImageUrl: inputUrl,
-            style: styleId,
-            status: 'queued',
-          },
-        });
-
-        await queue.add('process_image', {
+      const editJobId = crypto.randomUUID();
+      await prisma.imageJob.create({
+        data: {
+          id: editJobId,
           orderId: order.id,
-          imageJobId: editJobId,
-          phoneNumber: phoneNumber,
-          inputImageUrl: inputUrl,
+          inputImageUrl: primaryUrl,
           style: styleId,
-          productCategory: order.productCategory ?? undefined,
-          pipeline: cutoutUrls[i] ? 'fallback' : 'primary',
-        });
+          styleIndex: 0,
+          status: 'queued',
+        },
+      });
 
-        jobsEnqueued++;
-      }
+      const queue = getImageQueue();
+      await queue.add('process_image', {
+        orderId: order.id,
+        imageJobId: editJobId,
+        phoneNumber: phoneNumber,
+        inputImageUrl: primaryUrl,
+        style: styleId,
+        productCategory: order.productCategory ?? undefined,
+        pipeline: useCutout ? 'fallback' : 'primary',
+      });
 
       await transitionTo(phoneNumber, 'EDIT_PROCESSING', {
         styleSelection: styleId,
       });
 
-      logger.info('Style-change edit: reprocessing all images with new style', {
+      logger.info('Style-change edit: single-job reprocessing with new style', {
         phoneNumber,
         styleId,
         orderId: order.id,
-        jobsEnqueued,
-        imageCount: inputImageUrls.length,
+        primaryUrl,
       });
       return;
     }
@@ -292,15 +296,16 @@ function resolvePackStyles(styleId: string, category: string | null): string[] |
 /**
  * Human-readable display name for a pack.
  */
-function packDisplayName(packId: string, lang: 'hi' | 'en'): string {
-  const names: Record<string, { hi: string; en: string }> = {
-    smart_pack: { hi: 'Smart Pack \u2728', en: 'Smart Pack \u2728' },
-    bestseller_pack: { hi: 'Best Seller Pack \ud83c\udfc6', en: 'Best Seller Pack \ud83c\udfc6' },
-    festival_pack: { hi: 'Festival Pack \ud83c\udf89', en: 'Festival Pack \ud83c\udf89' },
-    action_pack: { hi: 'Action Pack \ud83d\udcaa', en: 'Action Pack \ud83d\udcaa' },
-    custom_pack: { hi: 'Custom \ud83c\udfa8', en: 'Custom \ud83c\udfa8' },
+function packDisplayName(packId: string, lang: Language): string {
+  const names: Record<string, { hinglish: string; en: string }> = {
+    smart_pack: { hinglish: 'Smart Pack \u2728', en: 'Smart Pack \u2728' },
+    bestseller_pack: { hinglish: 'Best Seller Pack \ud83c\udfc6', en: 'Best Seller Pack \ud83c\udfc6' },
+    festival_pack: { hinglish: 'Festival Pack \ud83c\udf89', en: 'Festival Pack \ud83c\udf89' },
+    action_pack: { hinglish: 'Action Pack \ud83d\udcaa', en: 'Action Pack \ud83d\udcaa' },
+    custom_pack: { hinglish: 'Custom \ud83c\udfa8', en: 'Custom \ud83c\udfa8' },
   };
-  return names[packId]?.[lang] ?? packId;
+  const key = lang === 'hinglish' ? 'hinglish' : 'en';
+  return names[packId]?.[key] ?? packId;
 }
 
 /**
@@ -308,26 +313,27 @@ function packDisplayName(packId: string, lang: 'hi' | 'en'): string {
  */
 function resolveSmartPack(category: string | null): string[] {
   const mapping: Record<string, string[]> = {
-    cat_jewellery: ['style_clickkar_special', 'style_gradient', 'style_lifestyle'],
-    cat_food: ['style_clickkar_special', 'style_lifestyle', 'style_outdoor'],
-    cat_garment: ['style_clickkar_special', 'style_lifestyle', 'style_with_model'],
-    cat_skincare: ['style_clickkar_special', 'style_clean_white', 'style_lifestyle'],
-    cat_candle: ['style_clickkar_special', 'style_lifestyle', 'style_festive'],
-    cat_bag: ['style_clickkar_special', 'style_lifestyle', 'style_outdoor'],
+    cat_jewellery: ['style_autmn_special', 'style_gradient', 'style_lifestyle'],
+    cat_food: ['style_autmn_special', 'style_lifestyle', 'style_festive'],
+    cat_garment: ['style_autmn_special', 'style_lifestyle', 'style_with_model'],
+    cat_skincare: ['style_autmn_special', 'style_clean_white', 'style_gradient'],
+    cat_candle: ['style_autmn_special', 'style_gradient', 'style_festive'],
+    cat_bag: ['style_autmn_special', 'style_lifestyle', 'style_gradient'],
+    cat_electronics: ['style_autmn_special', 'style_gradient', 'style_studio'],
   };
-  return mapping[category ?? ''] ?? ['style_clickkar_special', 'style_lifestyle', 'style_studio'];
+  return mapping[category ?? ''] ?? ['style_autmn_special', 'style_lifestyle', 'style_gradient'];
 }
 
 function resolveStyleFromText(text: string): string | null {
-  if (text.includes('special') || text.includes('clickkar') || text.includes('best') || text.includes('creative')) return ListIds.STYLE_CLICKKAR_SPECIAL;
+  if (text.includes('special') || text.includes('autmn') || text.includes('best') || text.includes('creative')) return ListIds.STYLE_AUTMN_SPECIAL;
   if (text.includes('white') || text.includes('safed') || text.includes('clean')) return ListIds.STYLE_CLEAN_WHITE;
   if (text.includes('lifestyle') || text.includes('life')) return ListIds.STYLE_LIFESTYLE;
   if (text.includes('gradient') || text.includes('color') || text.includes('colour')) return ListIds.STYLE_GRADIENT;
   if (text.includes('outdoor') || text.includes('bahar') || text.includes('nature')) return ListIds.STYLE_OUTDOOR;
   if (text.includes('studio') || text.includes('professional')) return ListIds.STYLE_STUDIO;
   if (text.includes('festive') || text.includes('tyohar') || text.includes('festival')) return ListIds.STYLE_FESTIVE;
-  if (text.includes('minimal') || text.includes('simple')) return 'style_minimal';
+  if (text.includes('minimal') || text.includes('simple')) return ListIds.STYLE_CLEAN_WHITE;
   if (text.includes('model') || text.includes('person') || text.includes('human')) return ListIds.STYLE_WITH_MODEL;
-  if (text.includes('video') || text.includes('reel') || text.includes('clip')) return ListIds.STYLE_VIDEO_SHOOT;
+  if (text.includes('video') || text.includes('reel') || text.includes('clip')) return ListIds.STYLE_AUTMN_SPECIAL;
   return null;
 }

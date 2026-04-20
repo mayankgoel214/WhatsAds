@@ -1,5 +1,5 @@
 {
-  "name": "@whatsads/ai",
+  "name": "@autmn/ai",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -13,7 +13,7 @@
   "dependencies": {
     "@fal-ai/client": "^1.0.0",
     "@google/genai": "^1.0.0",
-    "@whatsads/storage": "workspace:*",
+    "@autmn/storage": "workspace:*",
     "fluent-ffmpeg": "^2.1.3",
     "groq-sdk": "^0.8.0",
     "sharp": "^0.33.0",

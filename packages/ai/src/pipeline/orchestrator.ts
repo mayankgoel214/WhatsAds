@@ -29,7 +29,7 @@ export interface ProcessImageResult {
   cutoutUrl?: string;
   studioShotUrl?: string;
   qaScore: number;
-  pipeline: 'composite' | 'styled-studio-fallback';
+  pipeline: 'composite' | 'styled-studio-fallback' | 'primary';
   attempts: number;
   durationMs: number;
   inputAssessment?: { usable: boolean; productCategory: string };
@@ -37,6 +37,17 @@ export interface ProcessImageResult {
   adPrompt?: string;
   rejected?: boolean;
   rejectionReason?: string;
+  /** The creative direction actually used during generation — returned so the worker
+   *  can cache it per-style regardless of whether the profile already had it. */
+  usedCreativeDirection?: {
+    heroMoment: string;
+    creativeBrief: string;
+    scenePrompt: string;
+    dynamicElements: string[];
+    emotionalTrigger: string;
+    storyScene: string;
+    backgroundOnlyPrompt: string;
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-# ClickKar — Pre-Build Checklist (Day 0)
+# Autmn — Pre-Build Checklist (Day 0)
 Architecture: Option C Smart Hybrid
 Date written: 2026-03-27
 
@@ -30,7 +30,7 @@ Steps in order:
 2. Go to https://business.facebook.com and create a Meta Business account.
    Use your real business name — this shows up in Business Verification.
 3. Go to https://developers.facebook.com and create a Developer account.
-4. Create a new App. Choose type "Business". Give it a name like "ClickKar".
+4. Create a new App. Choose type "Business". Give it a name like "Autmn".
 5. Add the "WhatsApp" product to your app from the dashboard.
 6. In the WhatsApp setup, you will get a temporary test phone number from Meta.
    This lets you send test messages immediately without your real number.
@@ -157,7 +157,7 @@ Steps:
 Free tier limits: Check current limits at https://docs.sarvam.ai/api-reference/limits
 As of mid-2025, they had a free research/startup tier with limited monthly calls.
 
-Use case for ClickKar: Groq Whisper is primary. Sarvam is fallback only when
+Use case for Autmn: Groq Whisper is primary. Sarvam is fallback only when
 Groq fails or rate-limits. Sarvam is particularly stronger for regional accents
 in Hindi and Dravidian languages.
 
@@ -249,7 +249,7 @@ Dashboard: https://console.upstash.com
 Steps:
 1. Sign up with GitHub or Google.
 2. Click "Create Database". Choose type: Redis.
-3. Name: "clickkar-queue". Region: ap-south-1 (Mumbai).
+3. Name: "autmn-queue". Region: ap-south-1 (Mumbai).
 4. Type: Regional (not Global — cheaper, same region as Railway).
 5. Once created, go to the database details page. Copy:
    - Endpoint (the full redis://... URL) — this is UPSTASH_REDIS_URL
@@ -280,11 +280,11 @@ Dashboard: https://railway.app/dashboard
 Steps:
 1. Sign up with GitHub.
 2. Click "New Project" > "Deploy from GitHub repo".
-3. Connect your GitHub account and select the ClickKar repo.
+3. Connect your GitHub account and select the Autmn repo.
 4. Railway will auto-detect Node.js.
 5. Add environment variables under the "Variables" tab — add all env vars from this doc.
 6. Set the start command in railway.toml or package.json scripts: node src/index.js
-7. Railway gives you a public URL like clickkar-production.up.railway.app
+7. Railway gives you a public URL like autmn-production.up.railway.app
    Use this as your webhook URL for Meta and Razorpay during development.
 
 Free tier limits (Hobby plan — $5/month credit):
@@ -358,7 +358,7 @@ Individual / Sole Proprietor (easiest path — recommended for solo developer):
 - Aadhaar card (for identity + address)
 - Bank account: savings or current, in your name
 - Business address: your home address is fine for Individual
-- Website or app description: describe ClickKar in 2-3 sentences
+- Website or app description: describe Autmn in 2-3 sentences
 - GSTIN: not required if turnover is under 20 lakh per year. Add later if needed.
 
 Private Limited Company (if you have one registered):
@@ -447,7 +447,7 @@ NODE_ENV=development             # Set to "production" in Railway
 SENTRY_DSN=                      # From Sentry project settings
 
 # ─── App Config ───────────────────────────────────────────────────────────────
-APP_URL=                         # Your Railway public URL (e.g. https://clickkar.up.railway.app)
+APP_URL=                         # Your Railway public URL (e.g. https://autmn.up.railway.app)
                                  # Used to generate payment link callbacks and image URLs
 WEBHOOK_BASE_URL=                # Same as APP_URL in most cases
 ```
@@ -475,7 +475,7 @@ When you register a phone number with WhatsApp Cloud API (Meta):
 
 Option A — Use a dedicated SIM for the business number (RECOMMENDED):
 - Buy a new Jio/BSNL/Airtel SIM. Costs Rs. 99-299.
-- Use that new number for WhatsApp Cloud API / ClickKar.
+- Use that new number for WhatsApp Cloud API / Autmn.
 - Keep your existing personal number untouched.
 - This is the right answer. Do not sacrifice your personal number.
 
@@ -527,7 +527,7 @@ Time required: 30-60 minutes if Business Verification is already done.
 
 When you register a business number, Meta requires you to set a Display Name.
 This is what users see in WhatsApp instead of the phone number.
-Examples: "ClickKar", "ClickKar by YourName"
+Examples: "Autmn", "Autmn by YourName"
 
 Rules:
 - Cannot be generic (e.g. "Ads" will be rejected)
@@ -585,7 +585,7 @@ Priority order is based on: what blocks everything else, and what takes longest 
 ### HOUR 2-3 (Do these next)
 
 [ ] 9. Sign up for Railway at https://railway.app
-        Connect your GitHub account. Create a new project from the ClickKar repo.
+        Connect your GitHub account. Create a new project from the Autmn repo.
         Note the auto-generated public URL — you need this for webhook setup.
         Add all environment variables collected so far under the Variables tab. (15 minutes)
 

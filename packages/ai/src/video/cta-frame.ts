@@ -64,12 +64,12 @@ export async function generateCTAFrame(options: CTAFrameOptions): Promise<Buffer
       ${ctaText}
     </text>
 
-    <!-- Clickkar branding at bottom -->
+    <!-- Autmn branding at bottom -->
     <text x="${w / 2}" y="${h - 40}"
           font-family="Arial,Helvetica,sans-serif"
           font-weight="500" font-size="14"
           fill="rgba(255,255,255,0.5)" text-anchor="middle">
-      Made with Clickkar
+      Made with Autmn
     </text>
   </svg>`;
 

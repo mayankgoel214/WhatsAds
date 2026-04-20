@@ -10,6 +10,9 @@ export interface GeminiGenerateParams {
   prompt: string;
   aspectRatio?: string;  // default '1:1'
   temperature?: number;  // default 1.0 for generation
+  /** Optional reference images (up to 2). Passed alongside the primary product photo
+   *  to give the model additional angles/details for multi-angle orders. */
+  referenceImageBuffers?: Buffer[];
 }
 
 export interface GeminiEditParams {
@@ -73,7 +76,7 @@ const TIMEOUT_MS = 90_000;
 export async function geminiGenerateImage(
   params: GeminiGenerateParams,
 ): Promise<GeminiGenerateResult> {
-  const { inputImageBuffer, prompt, temperature = 0.7 } = params;
+  const { inputImageBuffer, prompt, temperature = 0.7, referenceImageBuffers } = params;
 
   const startMs = Date.now();
 
@@ -82,15 +85,44 @@ export async function geminiGenerateImage(
     throw new Error('Gemini image generation circuit breaker is OPEN — skipping to fallback');
   }
 
-  console.info(JSON.stringify({ event: 'gemini_generate_start', model: getGeminiModel(), promptLength: prompt.length }));
+  console.info(JSON.stringify({
+    event: 'gemini_generate_start',
+    model: getGeminiModel(),
+    promptLength: prompt.length,
+    referenceCount: referenceImageBuffers?.length ?? 0,
+  }));
 
   const genAI = getGenAI();
 
   const work = async (): Promise<GeminiGenerateResult> => {
     const model = genAI.models;
 
-    const inputMime = detectMime(inputImageBuffer);
-    const inputBase64 = inputImageBuffer.toString('base64');
+    // Build parts array: primary image → reference images → text prompt
+    const parts: Array<{ inlineData: { mimeType: string; data: string } } | { text: string }> = [];
+
+    // Primary image (Image 1)
+    parts.push({
+      inlineData: {
+        mimeType: detectMime(inputImageBuffer),
+        data: inputImageBuffer.toString('base64'),
+      },
+    });
+
+    // Reference images (Image 2, Image 3 — up to 2)
+    if (referenceImageBuffers && referenceImageBuffers.length > 0) {
+      const refs = referenceImageBuffers.slice(0, 2);
+      for (const refBuf of refs) {
+        parts.push({
+          inlineData: {
+            mimeType: detectMime(refBuf),
+            data: refBuf.toString('base64'),
+          },
+        });
+      }
+    }
+
+    // Text prompt last
+    parts.push({ text: prompt });
 
     const response = await model.generateContent({
       model: getGeminiModel(),
@@ -101,15 +133,7 @@ export async function geminiGenerateImage(
       contents: [
         {
           role: 'user',
-          parts: [
-            {
-              inlineData: {
-                mimeType: inputMime,
-                data: inputBase64,
-              },
-            },
-            { text: prompt },
-          ],
+          parts,
         },
       ],
     });
@@ -121,16 +145,16 @@ export async function geminiGenerateImage(
       throw new Error(`Gemini generation blocked by safety filters (finishReason: ${finishReason})`);
     }
 
-    const parts = response.candidates?.[0]?.content?.parts ?? [];
+    const responseParts = response.candidates?.[0]?.content?.parts ?? [];
 
     let imageBuffer: Buffer | undefined;
     let textResponse: string | undefined;
 
-    for (const part of parts) {
-      if (part.inlineData?.mimeType?.startsWith('image/') && part.inlineData.data) {
-        imageBuffer = Buffer.from(part.inlineData.data, 'base64');
-      } else if (typeof part.text === 'string' && part.text.length > 0) {
-        textResponse = part.text;
+    for (const part of responseParts) {
+      if ((part as any).inlineData?.mimeType?.startsWith('image/') && (part as any).inlineData?.data) {
+        imageBuffer = Buffer.from((part as any).inlineData.data, 'base64');
+      } else if (typeof (part as any).text === 'string' && (part as any).text.length > 0) {
+        textResponse = (part as any).text;
       }
     }
 

@@ -6,9 +6,9 @@
 import { timingSafeEqual } from 'crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getConfig } from '../config.js';
-import { prisma } from '@whatsads/db';
-import { getRedisConnection } from '@whatsads/queue';
-import { getStorageClient } from '@whatsads/storage';
+import { prisma } from '@autmn/db';
+import { getRedisConnection } from '@autmn/queue';
+import { getStorageClient } from '@autmn/storage';
 
 /**
  * Parse a Supabase public storage URL into { bucket, path }.

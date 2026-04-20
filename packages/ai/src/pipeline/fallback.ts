@@ -34,13 +34,13 @@ interface StylePostConfig {
 const STYLE_POST_CONFIG: Record<string, StylePostConfig> = {
   style_clean_white: { grain: 0.002, vignette: 0.005, warmthShift: 0, satBoost: 1.0, contrast: 1.0, blackLift: 0 },
   style_studio:      { grain: 0.003, vignette: 0.02, warmthShift: 1, satBoost: 1.02, contrast: 1.01, blackLift: 2 },
-  style_gradient:    { grain: 0.003, vignette: 0.07, warmthShift: 1, satBoost: 0.97, contrast: 1.03, blackLift: 0 },
+  style_gradient:    { grain: 0.003, vignette: 0.05, warmthShift: 1, satBoost: 1.0, contrast: 1.06, blackLift: 3 },
   style_lifestyle:   { grain: 0.004, vignette: 0.04, warmthShift: 3, satBoost: 1.02, contrast: 0.97, blackLift: 5 },
   style_festive:     { grain: 0.003, vignette: 0.05, warmthShift: 5, satBoost: 1.04, contrast: 0.96, blackLift: 4 },
   style_outdoor:     { grain: 0.004, vignette: 0.05, warmthShift: 2, satBoost: 1.03, contrast: 0.96, blackLift: 4 },
   style_minimal:     { grain: 0.002, vignette: 0.01, warmthShift: -1, satBoost: 0.95, contrast: 1.02, blackLift: 1 },
   style_with_model:       { grain: 0.003, vignette: 0.04, warmthShift: 2, satBoost: 1.01, contrast: 0.98, blackLift: 3 },
-  style_clickkar_special: { grain: 0.003, vignette: 0.10, warmthShift: 0, satBoost: 1.02, contrast: 1.0, blackLift: 3 },
+  style_autmn_special: { grain: 0.003, vignette: 0.10, warmthShift: 0, satBoost: 1.02, contrast: 1.0, blackLift: 3 },
   style_video_shoot:      { grain: 0, vignette: 0.02, warmthShift: 1, satBoost: 1.02, contrast: 1.0, blackLift: 0 },
 };
 
@@ -92,8 +92,8 @@ export async function postProcessFinal(imageBuffer: Buffer, style?: string): Pro
     .jpeg({ quality: 95, mozjpeg: true })
     .withExifMerge({
       IFD0: {
-        Software: 'ClickKar AI',
-        ImageDescription: 'AI-generated product advertisement by ClickKar',
+        Software: 'Autmn AI',
+        ImageDescription: 'AI-generated product advertisement by Autmn',
       },
     })
     .toBuffer();
@@ -149,12 +149,12 @@ async function addChromaticAberration(imageBuffer: Buffer): Promise<Buffer> {
 }
 
 /**
- * Composite the Clickkar logo watermark onto the image.
+ * Composite the Autmn logo watermark onto the image.
  *
  * Approach inspired by Adobe Firefly + DALL-E:
  * 1. Subtle gradient scrim across bottom of image (ensures legibility on any background)
  * 2. Logo badge at ~12% of image width, bottom-right with proportional margin
- * 3. Semi-transparent dark pill with the actual Clickkar horizontal logo (CK icon + amber divider + wordmark)
+ * 3. Semi-transparent dark pill with the actual Autmn horizontal logo (CK icon + amber divider + wordmark)
  *
  * Badge scales proportionally with image size. No fixed pixel sizes.
  */
@@ -212,7 +212,7 @@ export async function addAILabel(imageBuffer: Buffer): Promise<Buffer> {
         <path d="M10 18 L10 30 L22 18" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
         <path d="M10 30 L22 42" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
         <line x1="28" y1="12" x2="28" y2="46" stroke="#EF9F27" stroke-width="1.2" opacity="0.85"/>
-        <text x="36" y="34" font-family="Arial,Helvetica,sans-serif" font-weight="600" font-size="18" fill="white" letter-spacing="-0.3">clickkar</text>
+        <text x="36" y="34" font-family="Arial,Helvetica,sans-serif" font-weight="600" font-size="18" fill="white" letter-spacing="-0.3">autmn</text>
       </g>
     </svg>
   </svg>`);
@@ -650,7 +650,7 @@ export async function downloadBuffer(url: string): Promise<Buffer> {
 
 export async function uploadToStorage(buffer: Buffer, filename: string, contentType = 'image/jpeg'): Promise<string> {
   try {
-    const { uploadFile, Buckets } = await import('@whatsads/storage');
+    const { uploadFile, Buckets } = await import('@autmn/storage');
     return await uploadFile(Buckets.PROCESSED_IMAGES, filename, buffer, contentType);
   } catch {
     // Fallback: use fal.ai storage

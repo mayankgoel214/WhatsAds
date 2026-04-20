@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { createBullBoard } from '@bull-board/api';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { FastifyAdapter } from '@bull-board/fastify';
-import { getImageQueue, getPaymentCheckQueue, getSessionTimeoutQueue } from '@whatsads/queue';
+import { getImageQueue, getPaymentCheckQueue, getSessionTimeoutQueue } from '@autmn/queue';
 
 export async function registerBullBoard(app: FastifyInstance): Promise<void> {
   const serverAdapter = new FastifyAdapter();

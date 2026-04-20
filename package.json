@@ -1,16 +1,16 @@
 {
-  "name": "whatsads",
+  "name": "autmn",
   "private": true,
   "scripts": {
-    "dev:api": "pnpm --filter @whatsads/api dev",
-    "dev:worker": "pnpm --filter @whatsads/worker dev",
+    "dev:api": "pnpm --filter @autmn/api dev",
+    "dev:worker": "pnpm --filter @autmn/worker dev",
     "dev": "pnpm run --parallel dev:api dev:worker",
-    "build": "pnpm --filter @whatsads/db build && pnpm --filter '!@whatsads/db' -r build",
+    "build": "pnpm --filter @autmn/db build && pnpm --filter '!@autmn/db' -r build",
     "typecheck": "pnpm -r typecheck",
-    "db:generate": "pnpm --filter @whatsads/db generate",
-    "db:migrate": "pnpm --filter @whatsads/db migrate",
-    "db:push": "pnpm --filter @whatsads/db push",
-    "db:studio": "pnpm --filter @whatsads/db studio",
+    "db:generate": "pnpm --filter @autmn/db generate",
+    "db:migrate": "pnpm --filter @autmn/db migrate",
+    "db:push": "pnpm --filter @autmn/db push",
+    "db:studio": "pnpm --filter @autmn/db studio",
     "clean": "pnpm -r exec rm -rf dist node_modules"
   },
   "devDependencies": {

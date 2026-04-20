@@ -6,11 +6,11 @@
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { WhatsAppClient, extractMessage, getMessageType, verifyWebhookSignature } from '@whatsads/whatsapp';
-import type { WhatsAppWebhookBody } from '@whatsads/whatsapp';
-import { handleIncomingMessage } from '@whatsads/session';
-import type { MessageContext } from '@whatsads/session';
-import { prisma } from '@whatsads/db';
+import { WhatsAppClient, extractMessage, getMessageType, verifyWebhookSignature } from '@autmn/whatsapp';
+import type { WhatsAppWebhookBody } from '@autmn/whatsapp';
+import { handleIncomingMessage } from '@autmn/session';
+import type { MessageContext } from '@autmn/session';
+import { prisma } from '@autmn/db';
 import { getConfig } from '../../config.js';
 
 // ---------------------------------------------------------------------------

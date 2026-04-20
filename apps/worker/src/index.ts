@@ -3,8 +3,8 @@ import { resolve } from 'path';
 loadEnv({ path: resolve(import.meta.dirname, '../../../.env'), override: true });
 
 import { Worker } from 'bullmq';
-import { getRedisConnection, QueueNames } from '@whatsads/queue';
-import { prisma } from '@whatsads/db';
+import { getRedisConnection, QueueNames } from '@autmn/queue';
+import { prisma } from '@autmn/db';
 import { getConfig } from './config.js';
 import { processImageJob } from './processors/image-processing.js';
 import { processPaymentCheck } from './processors/payment-check.js';
@@ -18,7 +18,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`Clickkar Worker starting (${config.NODE_ENV})`);
+  console.log(`Autmn Worker starting (${config.NODE_ENV})`);
 
   // Each BullMQ Worker MUST have its own Redis connection
   const imageWorker = new Worker(

@@ -7,7 +7,7 @@
         "url": null,
         "durationMs": 2662,
         "cost": "~$0.05",
-        "error": "Error: Cannot find package 'sharp' imported from /Users/lending/Clickkar/scripts/test-model-comparison.ts\nDid you mean to import \"sharp/lib/index.js\"?"
+        "error": "Error: Cannot find package 'sharp' imported from /Users/lending/Autmn/scripts/test-model-comparison.ts\nDid you mean to import \"sharp/lib/index.js\"?"
       },
       {
         "model": "Bria Product Shot",
@@ -43,7 +43,7 @@
         "url": null,
         "durationMs": 2366,
         "cost": "~$0.05",
-        "error": "Error: Cannot find package 'sharp' imported from /Users/lending/Clickkar/scripts/test-model-comparison.ts\nDid you mean to import \"sharp/lib/index.js\"?"
+        "error": "Error: Cannot find package 'sharp' imported from /Users/lending/Autmn/scripts/test-model-comparison.ts\nDid you mean to import \"sharp/lib/index.js\"?"
       },
       {
         "model": "Bria Product Shot",

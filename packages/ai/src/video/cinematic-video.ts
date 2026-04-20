@@ -17,7 +17,7 @@ const VIDEO_PROMPTS: Record<string, string> = {
   style_outdoor: 'Natural environment comes alive — wind through grass, dappled sunlight shifting, gentle breeze. Product sits still as the world moves around it.',
   style_festive: 'Warm festive glow with flickering lamp light. Gentle floating elements — petals, sparkles. Warm, celebratory atmosphere with subtle motion.',
   style_with_model: 'Person naturally interacts with the product — slight smile, subtle head turn, confident gesture. Cinematic portrait photography feel.',
-  style_clickkar_special: 'Cinematic reveal of the product with bold creative motion. Dramatic lighting shift, dynamic elements in motion, scroll-stopping visual energy.',
+  style_autmn_special: 'Cinematic reveal of the product with bold creative motion. Dramatic lighting shift, dynamic elements in motion, scroll-stopping visual energy.',
 };
 
 const DEFAULT_VIDEO_PROMPT =

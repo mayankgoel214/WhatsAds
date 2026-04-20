@@ -127,7 +127,7 @@ const STYLE_NARRATIVE_POOLS: Record<string, Record<string, string[]>> = {
     ],
     default: [
       `COZY NOOK. Techniques: SHELF STYLING + WARM LAMP LIGHT + CONTEXTUAL PROPS. Product placed on a cozy home shelf or wooden nook, flanked by a small plant and a ceramic vase. Warm table lamp creating a focused amber glow from one side. Books stacked nearby. The viewer imagines this product on THEIR shelf.`,
-      `WORKSPACE CURATED. Techniques: DESK SCENE + NATURAL WINDOW LIGHT + LIFESTYLE CONTEXT. Product on a curated workspace desk beside a steaming coffee cup, a leather notebook, and a potted succulent. Natural window light from the side, 4000K. Shallow DOF blurring the monitor and wall art behind. Productive, aspirational energy.`,
+      `WORKSPACE CURATED. Techniques: DESK SCENE + NATURAL WINDOW LIGHT + LIFESTYLE CONTEXT. Product on a curated workspace desk beside a ceramic coffee cup, a leather notebook, and a potted succulent. Natural window light from the side, 4000K. Shallow DOF blurring the monitor and wall art behind. Productive, aspirational energy.`,
       `MORNING COUNTER. Techniques: KITCHEN/BATHROOM CONTEXT + MORNING LIGHT + CASUAL PLACEMENT. Product placed casually on a marble kitchen counter or bathroom shelf beside contextual items (toothbrush holder, fruit bowl, soap dish). Soft morning light streaming from a window. The scene feels lived-in, real, relatable.`,
       `CAFE TABLE. Techniques: WARM AMBIANCE + BACKGROUND BOKEH + INTIMATE FRAMING. Product on a round cafe table, a latte with art beside it, warm pendant lamp overhead. The cafe interior dissolves into creamy warm bokeh behind — other patrons, shelves, hanging plants all softened. Intimate, inviting atmosphere.`,
       `BEDSIDE STYLING. Techniques: NIGHTSTAND SCENE + EVENING LAMP + COZY DEPTH. Product on a styled bedroom nightstand beside a stack of books, a small plant, and reading glasses. Warm evening lamp glow from behind the product creating a rim of amber light. Soft linen textures. The viewer wants this exact quiet evening.`,
@@ -346,7 +346,7 @@ ANATOMY (CRITICAL): Exactly 2 arms, 2 legs, 2 feet, 2 hands. Each hand has exact
 
 GRIP: Match product size/weight — pinch for flat items, wrap for bottles, cup for jars. NEVER pose for camera.`,
 
-  style_clickkar_special: `Shot on a high-end cinema camera. The photographer chose the perfect lens, angle, and lighting for maximum impact. Every element serves the story.`,
+  style_autmn_special: `Shot on a high-end cinema camera. The photographer chose the perfect lens, angle, and lighting for maximum impact. Every element serves the story.`,
 };
 
 // ---------------------------------------------------------------------------
@@ -445,7 +445,7 @@ function getStyleMandate(style: string): string {
 - For neutral products: use bold saturated colors (deep teal, rich burgundy, emerald, royal purple)
 State the EXACT color name in your creativeBrief. Professional studio lighting, product-focused.
 PROPS RULE: Props are ALLOWED but ONLY if directly derived from the product — its ingredients, flavors, materials, or primary use-case. Examples: a chips bag with its flavor ingredients (chili peppers, lime slices, scattered chips), skincare with its key botanical ingredient (rose petals, aloe leaves), a coffee product with coffee beans. If nothing relevant can be derived from the product, use ZERO props. A plain water bottle = no props. A gold necklace = soft velvet fabric only. Props must enhance the product story, not distract from it.`,
-    style_clickkar_special: `CLICKKAR SPECIAL — CREATIVE FREEDOM MODE.
+    style_autmn_special: `AUTMN SPECIAL — CREATIVE FREEDOM MODE.
 You are a world-class advertising art director at a top creative agency. Your job is to create the single most COMPELLING, scroll-stopping advertisement possible for this product.
 
 DO NOT default to any template. DO NOT use a plain background. Think BOLD.

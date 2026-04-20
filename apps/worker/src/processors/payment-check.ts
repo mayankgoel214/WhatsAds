@@ -6,11 +6,11 @@
  */
 
 import type { Job } from 'bullmq';
-import { prisma } from '@whatsads/db';
-import { pollPaymentStatus } from '@whatsads/payment';
-import { WhatsAppClient } from '@whatsads/whatsapp';
-import { onPaymentConfirmed, onRevisionPaymentConfirmed } from '@whatsads/session';
-import { getPaymentCheckQueue, PaymentCheckJobDataSchema } from '@whatsads/queue';
+import { prisma } from '@autmn/db';
+import { pollPaymentStatus } from '@autmn/payment';
+import { WhatsAppClient } from '@autmn/whatsapp';
+import { onPaymentConfirmed, onRevisionPaymentConfirmed } from '@autmn/session';
+import { getPaymentCheckQueue, PaymentCheckJobDataSchema } from '@autmn/queue';
 import { getConfig } from '../config.js';
 
 export async function processPaymentCheck(job: Job): Promise<void> {

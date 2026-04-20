@@ -3,7 +3,7 @@ import { getRazorpayClient } from './client.js';
 import type { CreatePaymentLinkParams } from './types.js';
 
 const DEFAULT_EXPIRES_IN_MINUTES = 30;
-const DEFAULT_DESCRIPTION = 'Clickkar - Professional Product Photo';
+const DEFAULT_DESCRIPTION = 'Autmn - Professional Product Photo';
 
 const CreatePaymentLinkSchema = z.object({
   orderId: z.string().min(1, 'orderId is required'),
@@ -33,7 +33,7 @@ export interface CreatedPaymentLink {
  *
  * - Sets reference_id to orderId for idempotent deduplication.
  * - Enables upi_link for UPI-first experience (best conversion in India).
- * - Skips SMS/email notifications — Clickkar delivers the link via WhatsApp.
+ * - Skips SMS/email notifications — Autmn delivers the link via WhatsApp.
  * - Amount is NEVER taken from the client; always pass from verified server state.
  */
 export async function createPaymentLink(

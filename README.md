@@ -1,4 +1,4 @@
-# ClickKar
+# Autmn
 
 WhatsApp-native AI product photography for Indian micro-sellers.
 
@@ -86,18 +86,18 @@ WhatsApp User receives ad image + Ken Burns video
 ### Monorepo Structure
 
 ```
-clickkar/
+autmn/
 ├── apps/
-│   ├── api/          @whatsads/api    — Fastify HTTP server, webhooks, session routing
-│   └── worker/       @whatsads/worker — BullMQ workers for image, payment, session jobs
+│   ├── api/          @autmn/api    — Fastify HTTP server, webhooks, session routing
+│   └── worker/       @autmn/worker — BullMQ workers for image, payment, session jobs
 └── packages/
-    ├── ai/           @whatsads/ai     — Full AI image pipeline (V3 + fallbacks)
-    ├── db/           @whatsads/db     — Prisma client + PostgreSQL schema
-    ├── payment/      @whatsads/payment — Razorpay payment link creation + verification
-    ├── queue/        @whatsads/queue  — BullMQ queue definitions + Redis connection
-    ├── session/      @whatsads/session — Conversation state machine + message handlers
-    ├── storage/      @whatsads/storage — Supabase Storage upload/download helpers
-    └── whatsapp/     @whatsads/whatsapp — WhatsApp Cloud API client + HMAC verification
+    ├── ai/           @autmn/ai     — Full AI image pipeline (V3 + fallbacks)
+    ├── db/           @autmn/db     — Prisma client + PostgreSQL schema
+    ├── payment/      @autmn/payment — Razorpay payment link creation + verification
+    ├── queue/        @autmn/queue  — BullMQ queue definitions + Redis connection
+    ├── session/      @autmn/session — Conversation state machine + message handlers
+    ├── storage/      @autmn/storage — Supabase Storage upload/download helpers
+    └── whatsapp/     @autmn/whatsapp — WhatsApp Cloud API client + HMAC verification
 ```
 
 ---
@@ -231,8 +231,8 @@ Copy `.env.example` to `.env` and fill in every value before running.
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/your-org/clickkar.git
-cd clickkar
+git clone https://github.com/your-org/autmn.git
+cd autmn
 ```
 
 ### 2. Install dependencies
@@ -256,7 +256,7 @@ Open `.env` and fill in every value. For dev, most AI/payment keys can stay as `
 1. Create a new project at supabase.com.
 2. Go to Settings → API. Copy `Project URL` → `SUPABASE_URL`, `service_role` key → `SUPABASE_SERVICE_ROLE_KEY`.
 3. Go to Settings → Database. Copy the **Connection string** (Transaction mode / port 6543) → `DATABASE_URL`. Copy the **Direct connection** (port 5432) → `DIRECT_URL`.
-4. Create a storage bucket named `clickkar` (or whatever name you use) with public read access.
+4. Create a storage bucket named `autmn` (or whatever name you use) with public read access.
 
 ### 6. Set up Upstash Redis
 
@@ -303,7 +303,7 @@ Copy the `https://` forwarding URL (e.g. `https://abc123.ngrok-free.app`).
 ### 10. Start the API server (Tab 1)
 
 ```bash
-pnpm --filter @whatsads/api dev
+pnpm --filter @autmn/api dev
 ```
 
 Or from the root:
@@ -317,7 +317,7 @@ The API starts at `http://localhost:3000`.
 ### 11. Start the worker (Tab 2)
 
 ```bash
-pnpm --filter @whatsads/worker dev
+pnpm --filter @autmn/worker dev
 ```
 
 Or from the root:
@@ -768,7 +768,7 @@ All admin routes require `x-admin-secret` header in production (value must match
 
 ## Deployment
 
-ClickKar runs as two separate Railway services from the same repo. Both share the same environment variables.
+Autmn runs as two separate Railway services from the same repo. Both share the same environment variables.
 
 ### Service 1: API
 
@@ -791,13 +791,13 @@ ClickKar runs as two separate Railway services from the same repo. Both share th
 
 ### Build order
 
-The root `build` script builds `@whatsads/db` first, then all other packages in parallel. This ensures Prisma Client is generated before any package that imports it.
+The root `build` script builds `@autmn/db` first, then all other packages in parallel. This ensures Prisma Client is generated before any package that imports it.
 
 ```bash
 pnpm build
 # Equivalent to:
-# pnpm --filter @whatsads/db build
-# pnpm --filter '!@whatsads/db' -r build
+# pnpm --filter @autmn/db build
+# pnpm --filter '!@autmn/db' -r build
 ```
 
 ### Database migrations
@@ -837,7 +837,7 @@ The `PAYMENT_BYPASS=true` flag is checked at startup in both `api` and `worker`.
 
 ### CORS disabled
 
-`@fastify/cors` is registered with `{ origin: false }`. ClickKar is an API-only service — no browser clients, no CORS needed.
+`@fastify/cors` is registered with `{ origin: false }`. Autmn is an API-only service — no browser clients, no CORS needed.
 
 ### Amount never from client
 
@@ -901,7 +901,7 @@ curl http://localhost:3000/health/ready
 ## Project Structure
 
 ```
-clickkar/
+autmn/
 ├── .env.example                    Environment variable template
 ├── package.json                    Root workspace — scripts and engines
 ├── pnpm-workspace.yaml             Workspace package paths
@@ -1032,7 +1032,7 @@ Indian micro-sellers (jewellers, home bakers, garment sellers, candle makers) al
 
 ### Why pnpm workspaces
 
-A single repo with shared packages (`@whatsads/db`, `@whatsads/session`, etc.) means one `pnpm install`, one TypeScript build, one place to update shared types. Alternatives like npm workspaces lack the hoisting performance. Turborepo was considered but adds complexity without meaningful benefit at this repo size.
+A single repo with shared packages (`@autmn/db`, `@autmn/session`, etc.) means one `pnpm install`, one TypeScript build, one place to update shared types. Alternatives like npm workspaces lack the hoisting performance. Turborepo was considered but adds complexity without meaningful benefit at this repo size.
 
 ### Why BullMQ instead of processing inline
 

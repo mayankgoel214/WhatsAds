@@ -1,3 +1,63 @@
+// ---------------------------------------------------------------------------
+// Language type — shared across all message functions and handlers
+// ---------------------------------------------------------------------------
+
+export type Language =
+  | 'en'
+  | 'hinglish'
+  | 'hi'
+  | 'ta'
+  | 'te'
+  | 'bn'
+  | 'mr'
+  | 'gu'
+  | 'kn'
+  | 'ml'
+  | 'pa'
+  | 'or';
+
+export const SUPPORTED_LANGUAGES: Language[] = [
+  'en', 'hinglish', 'hi', 'ta', 'te', 'bn', 'mr', 'gu', 'kn', 'ml', 'pa', 'or',
+];
+
+/** Human-readable English name for each language. */
+export function getLanguageName(lang: Language): string {
+  switch (lang) {
+    case 'en':       return 'English';
+    case 'hinglish': return 'Hinglish';
+    case 'hi':       return 'Hindi';
+    case 'ta':       return 'Tamil';
+    case 'te':       return 'Telugu';
+    case 'bn':       return 'Bengali';
+    case 'mr':       return 'Marathi';
+    case 'gu':       return 'Gujarati';
+    case 'kn':       return 'Kannada';
+    case 'ml':       return 'Malayalam';
+    case 'pa':       return 'Punjabi';
+    case 'or':       return 'Odia';
+  }
+}
+
+/** Native-script name — useful for UI display. */
+export function getLanguageNativeName(lang: Language): string {
+  switch (lang) {
+    case 'en':       return 'English';
+    case 'hinglish': return 'Hinglish';
+    case 'hi':       return 'हिंदी';
+    case 'ta':       return 'தமிழ்';
+    case 'te':       return 'తెలుగు';
+    case 'bn':       return 'বাংলা';
+    case 'mr':       return 'मराठी';
+    case 'gu':       return 'ગુજરાતી';
+    case 'kn':       return 'ಕನ್ನಡ';
+    case 'ml':       return 'മലയാളം';
+    case 'pa':       return 'ਪੰਜਾਬੀ';
+    case 'or':       return 'ଓଡ଼ିଆ';
+  }
+}
+
+// ---------------------------------------------------------------------------
+
 export const CONVERSATION_STATES = [
   'IDLE',
   'SETUP_LANGUAGE',
@@ -17,7 +77,7 @@ export type ConversationState = typeof CONVERSATION_STATES[number];
 export interface SessionContext {
   phoneNumber: string;
   userName?: string;
-  language: 'hi' | 'en';
+  language: Language;
   businessType?: string;
   currentState: ConversationState;
   currentOrderId?: string;
@@ -116,13 +176,13 @@ export const ButtonIds = {
 
 // Category → recommended style mapping (must stay in sync with resolveSmartStyle in style.ts)
 export const CATEGORY_STYLE_RECOMMENDATION: Record<string, string> = {
-  cat_jewellery: 'style_gradient',
+  cat_jewellery: 'style_gradient',    // Dark luxury suits jewellery best
   cat_food: 'style_lifestyle',
   cat_garment: 'style_lifestyle',
-  cat_skincare: 'style_minimal',
-  cat_candle: 'style_lifestyle',
-  cat_bag: 'style_outdoor',
-  cat_general: 'style_studio',
+  cat_skincare: 'style_autmn_special',
+  cat_candle: 'style_gradient',       // Dark luxury with candle's own flame
+  cat_bag: 'style_lifestyle',
+  cat_general: 'style_autmn_special',
 };
 
 export const ListIds = {
@@ -141,7 +201,7 @@ export const ListIds = {
   ACTION_PACK: 'action_pack',
   CUSTOM_PACK: 'custom_pack',
   // Individual styles (used in custom 3-step picker)
-  STYLE_CLICKKAR_SPECIAL: 'style_clickkar_special',
+  STYLE_AUTMN_SPECIAL: 'style_autmn_special',
   STYLE_CLEAN_WHITE: 'style_clean_white',
   STYLE_LIFESTYLE: 'style_lifestyle',
   STYLE_GRADIENT: 'style_gradient',

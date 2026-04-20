@@ -1,0 +1,41 @@
+{
+  "config": {
+    "adminUrl": "http://localhost:3001",
+    "adminKey": "REDACTED_SET_FROM_ENV_OR_LOCAL_CONFIG",
+    "runsPerCombo": 1,
+    "parallelism": 3,
+    "retries": 1
+  },
+  "products": [
+    {
+      "slug": "diet-coke",
+      "name": "Diet Coke can",
+      "category": "food",
+      "expectedItemCount": 1,
+      "photoDir": "products/diet-coke",
+      "photos": ["1.jpg", "2.jpg", "3.jpg"],
+      "styleTriplets": [
+        ["style_clean_white", "style_with_model", "style_autmn_special"]
+      ],
+      "instructions": [
+        { "case": "no-instruction", "text": null }
+      ],
+      "notes": "Photo 3 shows multiple cans — tests pipeline resilience with mixed inputs"
+    },
+    {
+      "slug": "kundan-polki",
+      "name": "Kundan Polki jewelry",
+      "category": "jewellery",
+      "expectedItemCount": 1,
+      "photoDir": "products/kundan-polki",
+      "photos": ["1.jpg", "2.jpg", "3.jpg"],
+      "styleTriplets": [
+        ["style_clean_white", "style_with_model", "style_autmn_special"]
+      ],
+      "instructions": [
+        { "case": "no-instruction", "text": null }
+      ],
+      "notes": "3 photos are different jewelry pieces (not multi-angle of same product) — known to cause analyzer fallback"
+    }
+  ]
+}

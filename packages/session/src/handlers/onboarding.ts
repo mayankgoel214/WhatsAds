@@ -5,10 +5,10 @@
  * Returning users: IDLE → (confirm style or SETUP_STYLE) → AWAITING_PHOTO → payment
  */
 
-import type { WhatsAppClient } from '@whatsads/whatsapp';
-import type { Session, User } from '@whatsads/db';
-import { prisma } from '@whatsads/db';
-import { uploadFile, Buckets } from '@whatsads/storage';
+import type { WhatsAppClient } from '@autmn/whatsapp';
+import type { Session, User } from '@autmn/db';
+import { prisma } from '@autmn/db';
+import { uploadFile, Buckets } from '@autmn/storage';
 import { transitionTo, updateUser } from '../db-helpers.js';
 import { downloadWhatsAppMedia, mimeToExt } from './instructions.js';
 import {
@@ -18,6 +18,7 @@ import {
   msgPickStylePack,
 } from '../messages.js';
 import { ListIds, ButtonIds, CATEGORY_STYLE_RECOMMENDATION, OUTPUT_STYLES_PER_ORDER } from '../types.js';
+import type { Language } from '../types.js';
 import type { MessageContext } from '../types.js';
 import { logger } from '../logger.js';
 
@@ -31,7 +32,23 @@ export async function handleIdle(
   message: MessageContext,
   wa: WhatsAppClient,
 ): Promise<void> {
-  const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
+  // Guard against stale dispatches — re-read state to ensure we're still IDLE.
+  // Race condition: a button tap queued before payment completes can arrive while
+  // the session is already in PROCESSING, causing phantom "Send your photo" messages.
+  const fresh = await prisma.session.findUnique({
+    where: { phoneNumber: session.phoneNumber },
+    select: { state: true },
+  });
+  if (fresh && fresh.state !== 'IDLE') {
+    console.info(JSON.stringify({
+      event: 'handleIdle_stale_dispatch',
+      phoneNumber: session.phoneNumber,
+      currentState: fresh.state,
+    }));
+    return; // Session has moved past IDLE — don't show returning user prompts
+  }
+
+  const lang = user.language as Language;
   const isReturning = Boolean(user.name);
 
   logger.info('handleIdle called', { phoneNumber: session.phoneNumber, isReturning, lastStyleUsed: user.lastStyleUsed, lang });
@@ -42,51 +59,64 @@ export async function handleIdle(
     const buttonId = message.buttonReplyId;
 
     if (buttonId === ButtonIds.SAME_STYLE && user.lastStyleUsed) {
-      // Restore the previous styleSelections if available, otherwise fall back to lastStyleUsed
+      // Restore the previous styleSelections if available, otherwise fall back to lastStyleUsed.
+      // If fewer than OUTPUT_STYLES_PER_ORDER styles are saved, fill remaining slots from the
+      // Smart Pack for the user's category (no style repeated).
       const prevSession = await prisma.session.findUnique({
         where: { phoneNumber: session.phoneNumber },
         select: { styleSelections: true },
       });
-      const prevSelections = prevSession?.styleSelections ?? [];
-      const selections = prevSelections.length >= OUTPUT_STYLES_PER_ORDER
-        ? prevSelections
-        : [user.lastStyleUsed];
+      const prevSelections = (prevSession?.styleSelections ?? []) as string[];
 
-      await transitionTo(session.phoneNumber, 'AWAITING_PHOTO', {
-        styleSelection: selections[0] ?? user.lastStyleUsed,
-        styleSelections: selections,
-        stylePickStep: 0,
-        imageMediaIds: [],
-        imageStorageUrls: [],
-        voiceInstructions: null,
-        currentOrderId: null,
-        earlyPhotoMediaId: null,
-      });
-
-      if (selections.length >= OUTPUT_STYLES_PER_ORDER) {
-        const styleNames = selections.map(s => styleDisplayName(s, lang));
-        await wa.sendText(session.phoneNumber, msgAllStylesReady(lang, styleNames));
+      let selections: string[];
+      if (prevSelections.length >= OUTPUT_STYLES_PER_ORDER) {
+        selections = prevSelections.slice(0, OUTPUT_STYLES_PER_ORDER);
       } else {
-        const styleName = styleDisplayName(user.lastStyleUsed, lang);
-        await wa.sendText(session.phoneNumber, lang === 'hi'
-          ? `${styleName} set! 📸 Photo bhejiye!`
-          : `${styleName} set! 📸 Send your photo!`);
+        const saved = prevSelections.length > 0 ? prevSelections : [user.lastStyleUsed];
+        selections = fillWithSmartPack(saved, user.businessType ?? null, OUTPUT_STYLES_PER_ORDER);
       }
+
+      // Atomic guard: only the first handler to claim IDLE→AWAITING_PHOTO proceeds
+      const claimed = await prisma.session.updateMany({
+        where: { phoneNumber: session.phoneNumber, state: 'IDLE' },
+        data: {
+          state: 'AWAITING_PHOTO',
+          stateEnteredAt: new Date(),
+          styleSelection: selections[0] ?? user.lastStyleUsed,
+          styleSelections: selections,
+          stylePickStep: 0,
+          imageMediaIds: [],
+          imageStorageUrls: [],
+          voiceInstructions: null,
+          currentOrderId: null,
+          earlyPhotoMediaId: null,
+        },
+      });
+      if (claimed.count === 0) return; // another handler already transitioned
+
+      const styleNames = selections.map(s => styleDisplayName(s, lang));
+      await wa.sendText(session.phoneNumber, msgAllStylesReady(lang, styleNames));
       await wa.sendText(session.phoneNumber, msgSendProductPhotos(lang));
       return;
     }
 
     if (buttonId === ButtonIds.NEW_STYLE || buttonId === 'try_new_style') {
-      // Show individual style list (styles-first: step 1 of 3)
-      await transitionTo(session.phoneNumber, 'SETUP_STYLE', {
-        currentOrderId: null,
-        styleSelection: null,
-        styleSelections: [],
-        stylePickStep: 0,
-        imageMediaIds: [],
-        imageStorageUrls: [],
-        earlyPhotoMediaId: null,
+      // Atomic guard: only the first handler to claim IDLE→SETUP_STYLE proceeds
+      const claimed = await prisma.session.updateMany({
+        where: { phoneNumber: session.phoneNumber, state: 'IDLE' },
+        data: {
+          state: 'SETUP_STYLE',
+          stateEnteredAt: new Date(),
+          styleSelection: null,
+          styleSelections: [],
+          stylePickStep: 0,
+          currentOrderId: null,
+          earlyPhotoMediaId: null,
+        },
       });
+      if (claimed.count === 0) return; // another handler already transitioned
+
+      // Now send the style list (only runs once)
       await sendStyleList(session.phoneNumber, lang, wa, user.businessType ?? undefined, []);
       return;
     }
@@ -97,15 +127,14 @@ export async function handleIdle(
     if (user.lastStyleUsed) {
       const styleName = styleDisplayName(user.lastStyleUsed, lang);
 
-      // Check if they have a full 3-style selection saved
+      // We always resolve to 3 styles (filling from Smart Pack if needed), so label
+      // is always "Same 3 styles" regardless of how many were previously saved.
       const prevSession = await prisma.session.findUnique({
         where: { phoneNumber: session.phoneNumber },
         select: { styleSelections: true },
       });
       const hasFullPack = (prevSession?.styleSelections ?? []).length >= OUTPUT_STYLES_PER_ORDER;
-      const sameLabel = hasFullPack
-        ? (lang === 'hi' ? 'Same 3 styles' : 'Same 3 styles')
-        : (lang === 'hi' ? 'Haan, wahi' : 'Yes, same');
+      const sameLabel = lang === 'hinglish' ? 'Same 3 styles' : 'Same 3 styles';
 
       // If they sent a photo directly, download + upload immediately, then ask style
       if (message.messageType === 'image' && message.mediaId) {
@@ -137,10 +166,10 @@ export async function handleIdle(
           },
         });
         const bodyText = hasFullPack
-          ? (lang === 'hi'
+          ? (lang === 'hinglish'
             ? `Photo mil gayi, ${user.name} ji!\nPehle ke 3 styles use karein?`
             : `Got your photo, ${user.name}!\nUse your previous 3 styles?`)
-          : (lang === 'hi'
+          : (lang === 'hinglish'
             ? `Photo mil gayi, ${user.name} ji!\n${styleName} style lagayein?`
             : `Got your photo, ${user.name}!\nUse ${styleName} style?`);
         try {
@@ -149,12 +178,12 @@ export async function handleIdle(
             bodyText,
             [
               { id: ButtonIds.SAME_STYLE, title: sameLabel },
-              { id: ButtonIds.NEW_STYLE, title: lang === 'hi' ? 'Naye styles' : 'New styles' },
+              { id: ButtonIds.NEW_STYLE, title: lang === 'hinglish' ? 'Naye styles' : 'New styles' },
             ],
           );
         } catch (btnErr) {
           logger.error('sendButtons failed in handleIdle (photo path), falling back to sendText', { phoneNumber: session.phoneNumber, error: String(btnErr) });
-          await wa.sendText(session.phoneNumber, lang === 'hi'
+          await wa.sendText(session.phoneNumber, lang === 'hinglish'
             ? `Photo mil gayi, ${user.name} ji! Kaunsa style: "${styleName}" ya naya?`
             : `Got your photo, ${user.name}! Use "${styleName}" style or pick new ones?`);
         }
@@ -164,10 +193,10 @@ export async function handleIdle(
       // Text message: show style confirmation
       logger.info('Sending returning-user style confirmation buttons', { phoneNumber: session.phoneNumber, styleName, hasFullPack });
       const confirmBody = hasFullPack
-        ? (lang === 'hi'
+        ? (lang === 'hinglish'
           ? `${user.name} ji! Photo bhejiye — pehle ke 3 styles mein banayenge.\nStyles badalne hain?`
           : `${user.name}! Send your photo — we'll use your previous 3 styles.\nWant different styles?`)
-        : (lang === 'hi'
+        : (lang === 'hinglish'
           ? `${user.name} ji! Photo bhejiye — ${styleName} mein banayenge.\nStyle badlana hai?`
           : `${user.name}! Send your photo — we'll use ${styleName}.\nWant a different style?`);
       try {
@@ -176,7 +205,7 @@ export async function handleIdle(
           confirmBody,
           [
             { id: ButtonIds.SAME_STYLE, title: sameLabel },
-            { id: ButtonIds.NEW_STYLE, title: lang === 'hi' ? 'Naye styles' : 'New styles' },
+            { id: ButtonIds.NEW_STYLE, title: lang === 'hinglish' ? 'Naye styles' : 'New styles' },
           ],
         );
         logger.info('sendButtons succeeded', { phoneNumber: session.phoneNumber });
@@ -184,7 +213,7 @@ export async function handleIdle(
         logger.error('sendButtons failed in handleIdle, falling back to sendText', { phoneNumber: session.phoneNumber, error: String(btnErr) });
         await wa.sendText(
           session.phoneNumber,
-          lang === 'hi'
+          lang === 'hinglish'
             ? `Wapas aao, ${user.name} ji! Photo bhejiye, "${styleName}" mein banayenge.`
             : `Welcome back, ${user.name}! Send your product photo — we'll use "${styleName}".`,
         );
@@ -207,7 +236,7 @@ export async function handleIdle(
     try {
       await wa.sendText(
         session.phoneNumber,
-        lang === 'hi' ? `Wapas aao, ${user.name} ji!` : `Welcome back, ${user.name}!`,
+        lang === 'hinglish' ? `Wapas aao, ${user.name} ji!` : `Welcome back, ${user.name}!`,
       );
     } catch (txtErr) {
       logger.error('sendText failed for welcome back message', { phoneNumber: session.phoneNumber, error: String(txtErr) });
@@ -221,7 +250,7 @@ export async function handleIdle(
   try {
     await wa.sendButtons(
       session.phoneNumber,
-      'Namaste! Welcome to Clickkar.\nKaunsi bhasha? Which language?',
+      'Namaste! Welcome to Autmn.\nKaunsi bhasha? Which language?',
       [
         { id: ButtonIds.LANG_HINDI, title: 'Hindi' },
         { id: ButtonIds.LANG_ENGLISH, title: 'English' },
@@ -229,7 +258,7 @@ export async function handleIdle(
     );
   } catch (btnErr) {
     logger.error('sendButtons failed for new user language picker, falling back to sendText', { phoneNumber: session.phoneNumber, error: String(btnErr) });
-    await wa.sendText(session.phoneNumber, 'Namaste! Welcome to Clickkar.\nReply "Hindi" or "English" to continue.');
+    await wa.sendText(session.phoneNumber, 'Namaste! Welcome to Autmn.\nReply "Hindi" or "English" to continue.');
   }
 }
 
@@ -243,22 +272,22 @@ export async function handleSetupLanguage(
   message: MessageContext,
   wa: WhatsAppClient,
 ): Promise<void> {
-  let lang: 'hi' | 'en' = 'en';
+  let lang: Language = 'en';
 
   if (message.messageType === 'interactive' && message.buttonReplyId) {
-    lang = message.buttonReplyId === ButtonIds.LANG_HINDI ? 'hi' : 'en';
+    lang = message.buttonReplyId === ButtonIds.LANG_HINDI ? 'hinglish' : 'en';
   } else if (message.messageType === 'text' && message.text) {
     const text = message.text.toLowerCase().trim() ?? '';
-    const isHindi = text === 'hindi' || text === '1' || text === 'हिंदी' || text === 'हिन्दी' ||
+    const isHinglish = text === 'hindi' || text === '1' || text === 'हिंदी' || text === 'हिन्दी' ||
                     text.includes('hindi') || text.includes('हिं');
-    lang = isHindi ? 'hi' : 'en';
+    lang = isHinglish ? 'hinglish' : 'en';
   }
 
   await updateUser(session.phoneNumber, { language: lang });
   await transitionTo(session.phoneNumber, 'SETUP_NAME');
   await wa.sendText(
     session.phoneNumber,
-    lang === 'hi' ? 'Aapka naam bataiye?' : "What's your name?",
+    lang === 'hinglish' ? 'Aapka naam bataiye?' : "What's your name?",
   );
 }
 
@@ -272,13 +301,13 @@ export async function handleSetupName(
   message: MessageContext,
   wa: WhatsAppClient,
 ): Promise<void> {
-  const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
+  const lang = user.language as Language;
   const rawName = message.text?.trim();
 
   if (!rawName || rawName.length < 1) {
     await wa.sendText(
       session.phoneNumber,
-      lang === 'hi' ? 'Naam likh ke bhejiye.' : 'Please type your name.',
+      lang === 'hinglish' ? 'Naam likh ke bhejiye.' : 'Please type your name.',
     );
     return;
   }
@@ -304,7 +333,7 @@ export async function handleSetupCategory(
   message: MessageContext,
   wa: WhatsAppClient,
 ): Promise<void> {
-  const lang = (user.language === 'en' ? 'en' : 'hi') as 'hi' | 'en';
+  const lang = user.language as Language;
 
   if (message.messageType !== 'interactive' || !message.listReplyId) {
     await sendCategoryList(session.phoneNumber, lang, wa, user.name ?? undefined);
@@ -339,29 +368,29 @@ export async function handleSetupCategory(
 
 export async function sendCategoryList(
   phoneNumber: string,
-  lang: 'hi' | 'en',
+  lang: Language,
   wa: WhatsAppClient,
   name?: string,
 ): Promise<void> {
   const greeting = name
-    ? (lang === 'hi' ? `Shukriya, ${name} ji! Aap kaunsa product bechte hain?` : `Thanks, ${name}! What kind of product do you sell?`)
-    : (lang === 'hi' ? 'Aap kaunsa product bechte hain?' : 'What kind of product do you sell?');
+    ? (lang === 'hinglish' ? `Shukriya, ${name} ji! Aap kaunsa product bechte hain?` : `Thanks, ${name}! What kind of product do you sell?`)
+    : (lang === 'hinglish' ? 'Aap kaunsa product bechte hain?' : 'What kind of product do you sell?');
 
   await wa.sendList(
     phoneNumber,
     greeting,
-    lang === 'hi' ? 'Chuniye' : 'Choose',
+    lang === 'hinglish' ? 'Chuniye' : 'Choose',
     [
       {
-        title: lang === 'hi' ? 'Product type' : 'Product Type',
+        title: lang === 'hinglish' ? 'Product type' : 'Product Type',
         rows: [
-          { id: ListIds.CAT_JEWELLERY, title: lang === 'hi' ? 'Jewellery / Zewar' : 'Jewellery', description: 'Rings, necklaces, earrings...' },
-          { id: ListIds.CAT_FOOD, title: lang === 'hi' ? 'Khaana / Food' : 'Food', description: 'Packaged food, sweets, snacks...' },
-          { id: ListIds.CAT_GARMENT, title: lang === 'hi' ? 'Kapde / Garments' : 'Garments', description: 'Sarees, kurtas, shirts...' },
+          { id: ListIds.CAT_JEWELLERY, title: lang === 'hinglish' ? 'Jewellery / Zewar' : 'Jewellery', description: 'Rings, necklaces, earrings...' },
+          { id: ListIds.CAT_FOOD, title: lang === 'hinglish' ? 'Khaana / Food' : 'Food', description: 'Packaged food, sweets, snacks...' },
+          { id: ListIds.CAT_GARMENT, title: lang === 'hinglish' ? 'Kapde / Garments' : 'Garments', description: 'Sarees, kurtas, shirts...' },
           { id: ListIds.CAT_SKINCARE, title: 'Skincare / Beauty', description: 'Creams, serums, cosmetics...' },
           { id: ListIds.CAT_CANDLE, title: 'Candle / Home Decor', description: 'Candles, diffusers, decor...' },
           { id: ListIds.CAT_BAG, title: 'Bag / Purse', description: 'Handbags, wallets, clutches...' },
-          { id: ListIds.CAT_GENERAL, title: lang === 'hi' ? 'Kuch Aur' : 'Other', description: 'Electronics, toys, etc...' },
+          { id: ListIds.CAT_GENERAL, title: lang === 'hinglish' ? 'Kuch Aur' : 'Other', description: 'Electronics, toys, etc...' },
         ],
       },
     ],
@@ -377,7 +406,7 @@ export async function sendCategoryList(
  */
 export async function sendStylePackList(
   phoneNumber: string,
-  lang: 'hi' | 'en',
+  lang: Language,
   wa: WhatsAppClient,
   categoryId?: string,
 ): Promise<void> {
@@ -386,36 +415,36 @@ export async function sendStylePackList(
   const rows = [
     {
       id: ListIds.SMART_PACK,
-      title: lang === 'hi' ? 'Smart Pack \u2728' : 'Smart Pack \u2728',
-      description: lang === 'hi'
+      title: lang === 'hinglish' ? 'Smart Pack \u2728' : 'Smart Pack \u2728',
+      description: lang === 'hinglish'
         ? 'AI aapke product ke liye 3 best styles chunega'
         : 'AI picks the best 3 styles for your product',
     },
     {
       id: ListIds.BESTSELLER_PACK,
-      title: lang === 'hi' ? 'Best Seller Pack \ud83c\udfc6' : 'Best Seller Pack \ud83c\udfc6',
-      description: lang === 'hi'
+      title: lang === 'hinglish' ? 'Best Seller Pack \ud83c\udfc6' : 'Best Seller Pack \ud83c\udfc6',
+      description: lang === 'hinglish'
         ? 'Lifestyle + Studio + Dark Luxury'
         : 'Lifestyle + Studio + Dark Luxury',
     },
     {
       id: ListIds.FESTIVAL_PACK,
-      title: lang === 'hi' ? 'Festival Pack \ud83c\udf89' : 'Festival Pack \ud83c\udf89',
-      description: lang === 'hi'
+      title: lang === 'hinglish' ? 'Festival Pack \ud83c\udf89' : 'Festival Pack \ud83c\udf89',
+      description: lang === 'hinglish'
         ? 'Tyohar + Lifestyle + Clean White'
         : 'Festive + Lifestyle + Clean White',
     },
     {
       id: ListIds.ACTION_PACK,
-      title: lang === 'hi' ? 'Action Pack \ud83d\udcaa' : 'Action Pack \ud83d\udcaa',
-      description: lang === 'hi'
+      title: lang === 'hinglish' ? 'Action Pack \ud83d\udcaa' : 'Action Pack \ud83d\udcaa',
+      description: lang === 'hinglish'
         ? 'Model + Outdoor + Lifestyle'
         : 'With Model + Outdoor + Lifestyle',
     },
     {
       id: ListIds.CUSTOM_PACK,
-      title: lang === 'hi' ? 'Custom \ud83c\udfa8' : 'Custom \ud83c\udfa8',
-      description: lang === 'hi'
+      title: lang === 'hinglish' ? 'Custom \ud83c\udfa8' : 'Custom \ud83c\udfa8',
+      description: lang === 'hinglish'
         ? 'Khud 3 styles chuniye'
         : 'Pick 3 styles yourself',
     },
@@ -424,8 +453,8 @@ export async function sendStylePackList(
   await wa.sendList(
     phoneNumber,
     headerText,
-    lang === 'hi' ? 'Pack chuniye' : 'Choose pack',
-    [{ title: lang === 'hi' ? 'Style Packs' : 'Style Packs', rows }],
+    lang === 'hinglish' ? 'Pack chuniye' : 'Choose pack',
+    [{ title: lang === 'hinglish' ? 'Style Packs' : 'Style Packs', rows }],
   );
 }
 
@@ -435,7 +464,7 @@ export async function sendStylePackList(
  */
 export async function sendStyleList(
   phoneNumber: string,
-  lang: 'hi' | 'en',
+  lang: Language,
   wa: WhatsAppClient,
   categoryId?: string,
   alreadyPicked: string[] = [],
@@ -450,15 +479,14 @@ export async function sendStyleList(
 
   // All individual style rows (excluding already-picked styles)
   const individualRows = [
-    { id: ListIds.STYLE_CLICKKAR_SPECIAL, title: styleDisplayName(ListIds.STYLE_CLICKKAR_SPECIAL, lang), description: makeDesc(ListIds.STYLE_CLICKKAR_SPECIAL, 'AI picks the best creative direction') },
+    { id: ListIds.STYLE_AUTMN_SPECIAL, title: styleDisplayName(ListIds.STYLE_AUTMN_SPECIAL, lang), description: makeDesc(ListIds.STYLE_AUTMN_SPECIAL, 'AI picks the best creative direction') },
     { id: ListIds.STYLE_CLEAN_WHITE, title: styleDisplayName(ListIds.STYLE_CLEAN_WHITE, lang), description: makeDesc(ListIds.STYLE_CLEAN_WHITE, 'Pure white background') },
-    { id: ListIds.STYLE_LIFESTYLE, title: styleDisplayName(ListIds.STYLE_LIFESTYLE, lang), description: makeDesc(ListIds.STYLE_LIFESTYLE, 'Real-life setting') },
-    { id: ListIds.STYLE_GRADIENT, title: styleDisplayName(ListIds.STYLE_GRADIENT, lang), description: makeDesc(ListIds.STYLE_GRADIENT, 'Cinematic dark & dramatic') },
-    { id: ListIds.STYLE_OUTDOOR, title: styleDisplayName(ListIds.STYLE_OUTDOOR, lang), description: makeDesc(ListIds.STYLE_OUTDOOR, 'Natural outdoor scene') },
     { id: ListIds.STYLE_STUDIO, title: styleDisplayName(ListIds.STYLE_STUDIO, lang), description: makeDesc(ListIds.STYLE_STUDIO, 'Colored backdrop studio') },
-    { id: ListIds.STYLE_FESTIVE, title: styleDisplayName(ListIds.STYLE_FESTIVE, lang), description: makeDesc(ListIds.STYLE_FESTIVE, 'Festive/Diwali vibes') },
+    { id: ListIds.STYLE_LIFESTYLE, title: styleDisplayName(ListIds.STYLE_LIFESTYLE, lang), description: makeDesc(ListIds.STYLE_LIFESTYLE, 'Real-life setting') },
+    { id: ListIds.STYLE_OUTDOOR, title: styleDisplayName(ListIds.STYLE_OUTDOOR, lang), description: makeDesc(ListIds.STYLE_OUTDOOR, 'Natural outdoor scene') },
+    { id: ListIds.STYLE_GRADIENT, title: styleDisplayName(ListIds.STYLE_GRADIENT, lang), description: makeDesc(ListIds.STYLE_GRADIENT, lang === 'hinglish' ? 'Dramatic dark aur cinematic' : 'Dramatic dark & cinematic') },
+    { id: ListIds.STYLE_FESTIVE, title: styleDisplayName(ListIds.STYLE_FESTIVE, lang), description: makeDesc(ListIds.STYLE_FESTIVE, lang === 'hinglish' ? 'Tyohar ka mahaul' : 'Indian festival celebration') },
     { id: ListIds.STYLE_WITH_MODEL, title: styleDisplayName(ListIds.STYLE_WITH_MODEL, lang), description: makeDesc(ListIds.STYLE_WITH_MODEL, 'AI person with product') },
-    { id: ListIds.STYLE_VIDEO_SHOOT, title: '🎬 Video Ad (Beta)', description: lang === 'hi' ? 'Reels aur Status ke liye' : 'For Reels & Status' },
   ].filter(row => !alreadyPicked.includes(row.id));
 
   // Smart Pack is shown as the first option on step 1 — tapping it picks all 3 at once
@@ -466,8 +494,8 @@ export async function sendStyleList(
     ? [
         {
           id: ListIds.SMART_PACK,
-          title: lang === 'hi' ? 'Smart Pack \u2728' : 'Smart Pack \u2728',
-          description: lang === 'hi'
+          title: lang === 'hinglish' ? 'Smart Pack \u2728' : 'Smart Pack \u2728',
+          description: lang === 'hinglish'
             ? 'AI aapke product ke liye 3 best styles chunega'
             : 'AI picks the best 3 styles for your product',
         },
@@ -475,14 +503,14 @@ export async function sendStyleList(
       ]
     : individualRows;
 
-  const headerText = lang === 'hi'
+  const headerText = lang === 'hinglish'
     ? `Style ${pickNumber} of ${OUTPUT_STYLES_PER_ORDER} chuniye:`
     : `Pick style ${pickNumber} of ${OUTPUT_STYLES_PER_ORDER}:`;
 
   await wa.sendList(
     phoneNumber,
     headerText,
-    lang === 'hi' ? 'Chuniye' : 'Choose',
+    lang === 'hinglish' ? 'Chuniye' : 'Choose',
     [{ title: 'Styles', rows: allStyleRows }],
   );
 }
@@ -492,5 +520,48 @@ export async function sendStyleList(
 // ---------------------------------------------------------------------------
 
 const VALID_CATEGORY_IDS = new Set<string>(Object.values(ListIds).filter(id => id.startsWith('cat_')));
+
+/**
+ * Fills `existing` styles up to `target` count using the Smart Pack for the
+ * given category, then falls back to a default pool. Never repeats a style.
+ */
+function fillWithSmartPack(existing: string[], category: string | null, target: number): string[] {
+  const smartPackMapping: Record<string, string[]> = {
+    cat_jewellery: ['style_autmn_special', 'style_gradient', 'style_lifestyle'],
+    cat_food: ['style_autmn_special', 'style_lifestyle', 'style_festive'],
+    cat_garment: ['style_autmn_special', 'style_lifestyle', 'style_with_model'],
+    cat_skincare: ['style_autmn_special', 'style_clean_white', 'style_gradient'],
+    cat_candle: ['style_autmn_special', 'style_gradient', 'style_festive'],
+    cat_bag: ['style_autmn_special', 'style_lifestyle', 'style_gradient'],
+    cat_electronics: ['style_autmn_special', 'style_gradient', 'style_studio'],
+  };
+  const smartPack = smartPackMapping[category ?? ''] ?? ['style_autmn_special', 'style_lifestyle', 'style_gradient'];
+
+  const result = [...existing];
+  const usedSet = new Set(result);
+
+  for (const style of smartPack) {
+    if (result.length >= target) break;
+    if (!usedSet.has(style)) {
+      result.push(style);
+      usedSet.add(style);
+    }
+  }
+
+  // Safety net: if Smart Pack didn't fully cover the gap, pull from a broad pool
+  const fullPool = [
+    'style_autmn_special', 'style_lifestyle', 'style_gradient',
+    'style_outdoor', 'style_studio', 'style_festive', 'style_with_model', 'style_clean_white',
+  ];
+  for (const style of fullPool) {
+    if (result.length >= target) break;
+    if (!usedSet.has(style)) {
+      result.push(style);
+      usedSet.add(style);
+    }
+  }
+
+  return result.slice(0, target);
+}
 
 export { logger };

@@ -3,9 +3,9 @@
  * All state transitions go through transitionTo() to ensure atomicity.
  */
 
-import { prisma } from '@whatsads/db';
-import type { Session, User } from '@whatsads/db';
-import type { ConversationState } from './types.js';
+import { prisma } from '@autmn/db';
+import type { Session, User } from '@autmn/db';
+import type { ConversationState, Language } from './types.js';
 import { logger } from './logger.js';
 
 // ---------------------------------------------------------------------------
@@ -176,11 +176,11 @@ export async function checkAndMarkProcessed(messageId: string): Promise<boolean>
  * Resolve the language to use for a phone number.
  * Falls back to 'hi' if no user record exists yet.
  */
-export async function getLanguage(phoneNumber: string): Promise<'hi' | 'en'> {
+export async function getLanguage(phoneNumber: string): Promise<Language> {
   const user = await prisma.user.findUnique({
     where: { phoneNumber },
     select: { language: true },
   });
-  if (!user) return 'hi';
-  return user.language === 'en' ? 'en' : 'hi';
+  if (!user) return 'hinglish';
+  return (user.language as Language) || 'hinglish';
 }

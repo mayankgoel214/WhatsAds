@@ -5,10 +5,10 @@
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { verifyRazorpaySignature, parsePaymentLinkPaidEvent } from '@whatsads/payment';
-import { prisma } from '@whatsads/db';
-import { WhatsAppClient } from '@whatsads/whatsapp';
-import { onPaymentConfirmed, onRevisionPaymentConfirmed } from '@whatsads/session';
+import { verifyRazorpaySignature, parsePaymentLinkPaidEvent } from '@autmn/payment';
+import { prisma } from '@autmn/db';
+import { WhatsAppClient } from '@autmn/whatsapp';
+import { onPaymentConfirmed, onRevisionPaymentConfirmed } from '@autmn/session';
 import { getConfig } from '../../config.js';
 
 export async function razorpayWebhookRoutes(app: FastifyInstance): Promise<void> {

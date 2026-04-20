@@ -1,5 +1,5 @@
 {
-  "name": "@whatsads/session",
+  "name": "@autmn/session",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -11,12 +11,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@whatsads/db": "workspace:*",
-    "@whatsads/whatsapp": "workspace:*",
-    "@whatsads/queue": "workspace:*",
-    "@whatsads/payment": "workspace:*",
-    "@whatsads/storage": "workspace:*",
-    "@whatsads/ai": "workspace:*",
+    "@autmn/db": "workspace:*",
+    "@autmn/whatsapp": "workspace:*",
+    "@autmn/queue": "workspace:*",
+    "@autmn/payment": "workspace:*",
+    "@autmn/storage": "workspace:*",
+    "@autmn/ai": "workspace:*",
     "zod": "^3.23.0"
   }
 }

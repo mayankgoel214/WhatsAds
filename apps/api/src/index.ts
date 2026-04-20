@@ -4,11 +4,12 @@ loadEnv({ path: resolve(import.meta.dirname, '../../../.env'), override: true })
 
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import { prisma } from '@whatsads/db';
+import { prisma } from '@autmn/db';
 import { getConfig } from './config.js';
 import { registerRawBodyParser } from './middleware/raw-body.js';
 import { healthRoutes } from './routes/health.js';
 import { adminRoutes } from './routes/admin.js';
+import { adminTestRoutes } from './routes/admin/test.js';
 import { whatsappWebhookRoutes } from './routes/webhooks/whatsapp.js';
 import { razorpayWebhookRoutes } from './routes/webhooks/razorpay.js';
 import { registerBullBoard } from './plugins/bull-board.js';
@@ -40,6 +41,7 @@ async function main() {
   // Routes
   await app.register(healthRoutes);
   await app.register(adminRoutes);
+  await app.register(adminTestRoutes);
   await app.register(whatsappWebhookRoutes);
   await app.register(razorpayWebhookRoutes);
 
@@ -64,7 +66,7 @@ async function main() {
 
   // Start
   await app.listen({ port: config.PORT, host: '0.0.0.0' });
-  app.log.info(`Clickkar API running on port ${config.PORT} (${config.NODE_ENV})`);
+  app.log.info(`Autmn API running on port ${config.PORT} (${config.NODE_ENV})`);
 }
 
 main().catch((err) => {

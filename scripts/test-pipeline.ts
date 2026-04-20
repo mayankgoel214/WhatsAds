@@ -3,7 +3,7 @@
  * with deep product analysis and tailored ad prompts.
  *
  * Run:
- *   cd /Users/lending/Clickkar && npx tsx scripts/test-pipeline.ts
+ *   cd /Users/lending/Autmn && npx tsx scripts/test-pipeline.ts
  */
 
 import { readFileSync } from 'fs';
@@ -29,7 +29,7 @@ function loadEnv(envPath: string): void {
   }
 }
 
-loadEnv(resolve('/Users/lending/Clickkar/.env'));
+loadEnv(resolve('/Users/lending/Autmn/.env'));
 
 import { processProductImage } from '../packages/ai/dist/index.js';
 
@@ -47,7 +47,7 @@ const TEST_IMAGE_URL =
 
 async function main() {
   console.log('='.repeat(60));
-  console.log('Clickkar Pipeline Test — Nano Banana + Smart Analysis');
+  console.log('Autmn Pipeline Test — Nano Banana + Smart Analysis');
   console.log('='.repeat(60));
   console.log('Image URL:', TEST_IMAGE_URL);
   console.log('FAL_KEY:', (process.env['FAL_KEY'] ?? '').slice(0, 12) + '...');

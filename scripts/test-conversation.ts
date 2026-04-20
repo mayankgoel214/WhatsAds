@@ -3,7 +3,7 @@
  * session state machine directly (no real WhatsApp credentials needed).
  *
  * Run:
- *   cd /Users/lending/Clickkar && npx tsx scripts/test-conversation.ts
+ *   cd /Users/lending/Autmn && npx tsx scripts/test-conversation.ts
  */
 
 import fs from 'node:fs';
@@ -35,17 +35,17 @@ function loadDotEnv(envPath: string): void {
   }
 }
 
-loadDotEnv(path.resolve('/Users/lending/Clickkar/.env'));
+loadDotEnv(path.resolve('/Users/lending/Autmn/.env'));
 
 // ---------------------------------------------------------------------------
 // 2. Imports (after env is set so Prisma picks up DATABASE_URL)
 // ---------------------------------------------------------------------------
 
-import { handleIncomingMessage, ButtonIds, ListIds } from '@whatsads/session';
-import type { MessageContext } from '@whatsads/session';
-import type { WhatsAppClient } from '@whatsads/whatsapp';
-import type { SendMessageResponse, SendTemplatePayload } from '@whatsads/whatsapp/src/types.js';
-import { prisma } from '@whatsads/db';
+import { handleIncomingMessage, ButtonIds, ListIds } from '@autmn/session';
+import type { MessageContext } from '@autmn/session';
+import type { WhatsAppClient } from '@autmn/whatsapp';
+import type { SendMessageResponse, SendTemplatePayload } from '@autmn/whatsapp/src/types.js';
+import { prisma } from '@autmn/db';
 
 // ---------------------------------------------------------------------------
 // 3. Mock WhatsAppClient — logs all calls, returns a fake success response
@@ -250,7 +250,7 @@ async function setupTestDatabase(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function runConversation(): Promise<void> {
-  console.log('Clickkar -- Test Conversation Simulator');
+  console.log('Autmn -- Test Conversation Simulator');
   console.log('Phone:', TEST_PHONE);
   console.log('Database URL:', (process.env['DATABASE_URL'] ?? '').slice(0, 50) + '...');
   console.log();

@@ -38,7 +38,7 @@ const STYLE_BACKGROUNDS: Record<string, BackgroundConfig> = {
   style_clean_white: { r: 255, g: 255, b: 255 },
   style_minimal:     { r: 250, g: 248, b: 245, vignetteR: 230, vignetteG: 228, vignetteB: 225 },
   style_model:            { r: 235, g: 230, b: 225, vignetteR: 200, vignetteG: 195, vignetteB: 185 },
-  style_clickkar_special: { r: 30,  g: 30,  b: 30 },
+  style_autmn_special: { r: 30,  g: 30,  b: 30 },
   style_video_shoot:      { r: 20,  g: 20,  b: 30 },
 };
 
@@ -64,7 +64,7 @@ const STUDIO_COLOR_POOL: BackgroundConfig[] = [
 ];
 
 function getBackgroundConfig(style: string): BackgroundConfig {
-  if (style === 'style_studio' || style === 'style_clickkar_special') {
+  if (style === 'style_studio' || style === 'style_autmn_special') {
     // Random selection from the color pool
     const idx = Math.floor(Math.random() * STUDIO_COLOR_POOL.length);
     return STUDIO_COLOR_POOL[idx]!;
@@ -133,15 +133,18 @@ export async function createStyledStudioShot(
     .jpeg({ quality: 95 })
     .toBuffer();
 
-  // Step 6: Add subtle vignette if gradient colors are defined
-  if (bg.vignetteR !== undefined) {
+  // Step 6: Add vignette — stronger for dark styles (gradient), subtler for light styles
+  const isGradientStyle = style === 'style_gradient' || style === 'style_autmn_special' || style === 'style_video_shoot';
+  const vignetteOpacity = isGradientStyle ? 0.55 : (bg.vignetteR !== undefined ? 0.3 : 0.15);
+  {
     const vignetteOverlay = await sharp(
       Buffer.from(
         `<svg width="${SIZE}" height="${SIZE}">
           <defs>
-            <radialGradient id="v" cx="50%" cy="50%" r="70%">
+            <radialGradient id="v" cx="50%" cy="45%" r="65%">
               <stop offset="0%" stop-color="black" stop-opacity="0"/>
-              <stop offset="100%" stop-color="black" stop-opacity="0.3"/>
+              <stop offset="60%" stop-color="black" stop-opacity="0"/>
+              <stop offset="100%" stop-color="black" stop-opacity="${vignetteOpacity}"/>
             </radialGradient>
           </defs>
           <rect width="${SIZE}" height="${SIZE}" fill="url(#v)"/>
@@ -157,6 +160,31 @@ export async function createStyledStudioShot(
       .toBuffer();
   }
 
+  // Step 6b: For dark luxury (gradient) style — add a soft spotlight glow in the center
+  if (isGradientStyle) {
+    const spotlightOverlay = await sharp(
+      Buffer.from(
+        `<svg width="${SIZE}" height="${SIZE}">
+          <defs>
+            <radialGradient id="spot" cx="50%" cy="42%" r="45%">
+              <stop offset="0%" stop-color="white" stop-opacity="0.10"/>
+              <stop offset="50%" stop-color="white" stop-opacity="0.04"/>
+              <stop offset="100%" stop-color="white" stop-opacity="0"/>
+            </radialGradient>
+          </defs>
+          <rect width="${SIZE}" height="${SIZE}" fill="url(#spot)"/>
+        </svg>`
+      )
+    )
+      .png()
+      .toBuffer();
+
+    backgroundBuffer = await sharp(backgroundBuffer)
+      .composite([{ input: spotlightOverlay, blend: 'screen' }])
+      .jpeg({ quality: 95 })
+      .toBuffer();
+  }
+
   // Step 7: Add horizontal surface line — top half is "wall", bottom half is "surface"
   const surfaceLineY = Math.round(SIZE * 0.62); // Surface starts at 62% height
   const surfaceSvg = Buffer.from(
@@ -166,7 +194,7 @@ export async function createStyledStudioShot(
           <stop offset="0%" stop-color="black" stop-opacity="0"/>
           <stop offset="${Math.round((surfaceLineY / SIZE) * 100)}%" stop-color="black" stop-opacity="0"/>
           <stop offset="${Math.round((surfaceLineY / SIZE) * 100) + 1}%" stop-color="black" stop-opacity="0.04"/>
-          <stop offset="100%" stop-color="black" stop-opacity="0.08"/>
+          <stop offset="100%" stop-color="black" stop-opacity="0.10"/>
         </linearGradient>
       </defs>
       <rect width="${SIZE}" height="${SIZE}" fill="url(#surface)"/>
@@ -186,9 +214,34 @@ export async function createStyledStudioShot(
   // Place product so its bottom edge sits just above the surface line
   const top = Math.round(surfaceLineY - pH * 0.85);
 
-  // Step 8b: Composite product (no synthetic shadow — flatten+ensureAlpha produces visible dark rectangles)
-  const composites: { input: Buffer; left: number; top: number; blend?: string }[] = [];
-  composites.push({ input: resizedProduct, left, top });
+  // Step 8b: Add a soft drop shadow beneath the product cutout for all styles.
+  // The shadow is a blurred dark ellipse composited UNDER the product.
+  const shadowW = Math.round(pW * 0.85);
+  const shadowH = Math.round(Math.min(pH * 0.12, 48));
+  const shadowLeft = left + Math.round((pW - shadowW) / 2);
+  const shadowTop = top + pH - Math.round(shadowH * 0.5);
+  const shadowOpacity = isGradientStyle ? 0.65 : 0.40;
+  const shadowBuffer = await sharp(
+    Buffer.from(
+      `<svg width="${shadowW}" height="${shadowH}">
+        <defs>
+          <radialGradient id="sh" cx="50%" cy="50%" rx="50%" ry="50%">
+            <stop offset="0%" stop-color="black" stop-opacity="${shadowOpacity}"/>
+            <stop offset="100%" stop-color="black" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <ellipse cx="${Math.round(shadowW / 2)}" cy="${Math.round(shadowH / 2)}" rx="${Math.round(shadowW / 2)}" ry="${Math.round(shadowH / 2)}" fill="url(#sh)"/>
+      </svg>`
+    )
+  )
+    .png()
+    .blur(6)
+    .toBuffer();
+
+  const composites: { input: Buffer; left: number; top: number; blend?: string }[] = [
+    { input: shadowBuffer, left: shadowLeft, top: shadowTop },
+    { input: resizedProduct, left, top },
+  ];
 
   let result = await sharp(backgroundBuffer)
     .composite(composites.map(c => ({ input: c.input, left: c.left, top: c.top, blend: 'over' as const })))

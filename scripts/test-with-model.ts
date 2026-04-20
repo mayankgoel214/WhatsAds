@@ -1,6 +1,6 @@
 /**
  * Thorough "With Model" test across different product categories.
- * Run: cd /Users/lending/Clickkar && npx tsx scripts/test-with-model.ts
+ * Run: cd /Users/lending/Autmn && npx tsx scripts/test-with-model.ts
  */
 
 import { readFileSync } from 'fs';
@@ -18,7 +18,7 @@ function loadEnv(envPath: string): void {
   }
 }
 
-loadEnv(resolve('/Users/lending/Clickkar/.env'));
+loadEnv(resolve('/Users/lending/Autmn/.env'));
 
 import { processProductImage } from '../packages/ai/dist/index.js';
 

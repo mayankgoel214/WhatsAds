@@ -6,19 +6,20 @@
  */
 
 import type { Job } from 'bullmq';
-import { prisma } from '@whatsads/db';
-import type { ImageJob } from '@whatsads/db';
-import { processImageNeverFail, type NeverFailResult } from '@whatsads/ai';
-import { uploadFile, Buckets } from '@whatsads/storage';
-import { WhatsAppClient } from '@whatsads/whatsapp';
-import { sendProcessedImages } from '@whatsads/session';
-import { ImageProcessingJobDataSchema } from '@whatsads/queue';
+import { prisma } from '@autmn/db';
+import type { ImageJob } from '@autmn/db';
+import { processImageNeverFail, downloadBuffer, type NeverFailResult } from '@autmn/ai';
+import { uploadFile, Buckets } from '@autmn/storage';
+import { WhatsAppClient } from '@autmn/whatsapp';
+import { sendProcessedImages, msgGotPhotoCreating, msgProgressAlmostDone, msgProgressReadyToSend, msgPhotoProcessingFailed } from '@autmn/session';
+import type { Language } from '@autmn/session';
+import { ImageProcessingJobDataSchema } from '@autmn/queue';
 import { getConfig, type WorkerConfig } from '../config.js';
 
 async function sendProgressUpdate(
   phoneNumber: string,
   stage: number,
-  lang: 'hi' | 'en',
+  lang: Language,
   config: WorkerConfig,
 ): Promise<void> {
   try {
@@ -27,14 +28,7 @@ async function sendProgressUpdate(
       phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
     });
 
-    const messages: Record<number, Record<string, string>> = {
-      2: {
-        hi: 'Almost there! 🎨',
-        en: 'Almost there! 🎨',
-      },
-    };
-
-    const msg = messages[stage]?.[lang] ?? messages[stage]?.['en'] ?? '';
+    const msg = stage === 2 ? msgProgressAlmostDone(lang) : '';
     if (msg) await wa.sendText(phoneNumber, msg);
   } catch (err) {
     console.warn(JSON.stringify({ event: 'progress_update_failed', stage, error: String(err) }));
@@ -44,6 +38,14 @@ async function sendProgressUpdate(
 export async function processImageJob(job: Job): Promise<void> {
   const config = getConfig();
   const data = ImageProcessingJobDataSchema.parse(job.data);
+
+  // Bug 3 fix: compute effectiveStyle early so ALL cache keys are consistent.
+  // style_video_shoot maps to style_autmn_special. If this is declared later
+  // (as it was), the profile is written under data.style but looked up under
+  // effectiveStyle → guaranteed cache miss for video-shoot orders.
+  const effectiveStyle: string = data.style === 'style_video_shoot'
+    ? 'style_autmn_special'
+    : (data.style ?? 'style_lifestyle');
 
   const log = (msg: string, extra?: Record<string, unknown>) => {
     const line = JSON.stringify({ job: job.id, orderId: data.orderId, msg, ...extra });
@@ -65,7 +67,7 @@ export async function processImageJob(job: Job): Promise<void> {
     where: { phoneNumber: data.phoneNumber },
     select: { language: true },
   }).catch(() => null);
-  const lang = (userForLang?.language as 'hi' | 'en') || 'hi';
+  const lang = (userForLang?.language as Language) || 'hi';
 
   // Update job status
   await prisma.imageJob.update({
@@ -79,251 +81,19 @@ export async function processImageJob(job: Job): Promise<void> {
     }));
   }); // Job record might not exist for edits
 
-  // ── Multi-angle product analysis ────────────────────────────────────────────
-  // Run ONCE per order (on the first job). Subsequent jobs for the same order
-  // reuse the profile stored in Order.productProfile.
-  let productProfile: any = null;
-
-  {
-    // Stagger non-first jobs so styleIndex=0 has time to compute and store the
-    // profile before the other jobs check for it. Poll every 3s up to 30s
-    // instead of an unconditional 25s sleep — typically saves 15-20s.
-    if (styleIndex > 0) {
-      const maxWaitMs = 30_000;
-      const pollIntervalMs = 3_000;
-      const pollStartMs = Date.now();
-
-      while (Date.now() - pollStartMs < maxWaitMs) {
-        const checkOrder = await prisma.order.findUnique({
-          where: { id: data.orderId },
-          select: { productProfile: true },
-        });
-        if (checkOrder?.productProfile) {
-          console.info(JSON.stringify({ event: 'product_profile_found_via_poll', waitMs: Date.now() - pollStartMs }));
-          break;
-        }
-        await new Promise(r => setTimeout(r, pollIntervalMs));
-      }
-    }
-
-    const orderForProfile = await prisma.order.findUnique({
-      where: { id: data.orderId },
-      select: { productProfile: true, inputImageUrls: true },
-    }).catch(() => null);
-
-    if (orderForProfile?.productProfile) {
-      // Profile already computed by a previous job for this order — reuse it
-      productProfile = orderForProfile.productProfile;
-      console.info(JSON.stringify({ event: 'product_profile_reused', orderId: data.orderId }));
-    } else if (orderForProfile?.inputImageUrls && orderForProfile.inputImageUrls.length > 0) {
-      // First job to run — compute the profile from all input images
-      try {
-        const { analyzeMultiAngleProduct, downloadBuffer } = await import('@whatsads/ai');
-
-        const imageUrls = (orderForProfile.inputImageUrls as string[]).slice(0, 5);
-        const buffers = await Promise.all(imageUrls.map(url => downloadBuffer(url)));
-
-        const profile = await analyzeMultiAngleProduct(
-          buffers,
-          data.voiceInstructions,
-          data.style ? [data.style] : undefined,
-        );
-
-        // Persist in Order for subsequent jobs in the same order to reuse
-        const primaryUrl = imageUrls[profile.primaryImageIndex] ?? imageUrls[0];
-        await prisma.order.update({
-          where: { id: data.orderId },
-          data: {
-            productProfile: profile as any,
-            primaryInputImageUrl: primaryUrl,
-          },
-        });
-
-        productProfile = profile;
-        console.info(JSON.stringify({
-          event: 'product_profile_computed',
-          orderId: data.orderId,
-          imageCount: imageUrls.length,
-          primaryIndex: profile.primaryImageIndex,
-          productName: profile.productName,
-          hasBranding: profile.hasBranding,
-          brandingConfidence: profile.brandingConfidence,
-        }));
-      } catch (err) {
-        console.warn(JSON.stringify({
-          event: 'product_profile_failed',
-          orderId: data.orderId,
-          error: err instanceof Error ? err.message : String(err),
-        }));
-        // Non-fatal — pipeline falls back to single-image analysis inside V3
-      }
-    }
-  }
+  // V5 pipeline handles its own lightweight analysis (lightAnalyze, ~3s).
+  // V4's heavy analyzeProductV4 (24s, 42 fields) has been removed.
+  const productProfile: any = null;
 
   try {
-    // Declare shared output variables — set by either the video path or the normal pipeline path.
-    // Intentionally uninitialized here; both branches always assign before use.
+    // Declare shared output variables — all set by the normal pipeline path.
     // eslint-disable-next-line prefer-const
     let outputUrl!: string;
-    let videoUrl: string | undefined;
-    let storyUrl: string | undefined;
     let cutoutUrl: string | undefined;
 
-    // ── Video shoot routing ─────────────────────────────────────────────────
-    if (data.style === 'style_video_shoot') {
-      console.info(JSON.stringify({
-        event: 'video_shoot_start',
-        job: job.id,
-        orderId: data.orderId,
-      }));
-
-      try {
-        const { generateMultiShotVideo } = await import('@whatsads/ai');
-
-        // Generate a hero ad image first — the video pipeline animates a
-        // finished styled image, NOT the raw product photo.
-        console.info(JSON.stringify({
-          event: 'video_shoot_hero_gen_start',
-          job: job.id,
-          orderId: data.orderId,
-        }));
-        const heroResult = await processImageNeverFail({
-          imageUrl: data.inputImageUrl,
-          style: 'style_clickkar_special',
-          productCategory: data.productCategory,
-          voiceInstructions: data.voiceInstructions,
-          productProfile,
-        });
-        console.info(JSON.stringify({
-          event: 'video_shoot_hero_gen_complete',
-          job: job.id,
-          orderId: data.orderId,
-          heroUrl: heroResult.outputUrl.slice(0, 80),
-          tier: heroResult.tier,
-          qaScore: heroResult.qaScore,
-        }));
-
-        const videoResult = await generateMultiShotVideo({
-          imageUrl: heroResult.outputUrl,
-          productName: (productProfile as any)?.productName ?? 'Product',
-          productCategory: (productProfile as any)?.productCategory ?? data.productCategory,
-          style: data.style,
-          lang: 'en',
-        });
-
-        // Upload video to Supabase processed-images bucket (VIDEOS bucket not yet provisioned)
-        // Retry up to 3 times — large MP4 files can hit transient network errors.
-        const videoPath = `${data.phoneNumber}/${data.orderId}_${data.imageJobId}_video.mp4`;
-        for (let attempt = 0; attempt < 3; attempt++) {
-          try {
-            videoUrl = await uploadFile(
-              Buckets.PROCESSED_IMAGES,
-              videoPath,
-              videoResult.videoBuffer,
-              'video/mp4',
-            );
-            break;
-          } catch (uploadErr) {
-            console.warn(JSON.stringify({
-              event: 'video_upload_retry',
-              attempt: attempt + 1,
-              error: uploadErr instanceof Error ? uploadErr.message : String(uploadErr),
-            }));
-            if (attempt < 2) await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
-          }
-        }
-        if (!videoUrl) {
-          console.error(JSON.stringify({ event: 'video_upload_all_retries_failed', orderId: data.orderId }));
-          // videoUrl stays undefined — delivery will fall through to the thumbnail-only path below
-        }
-
-        // Upload thumbnail (hero frame) as the still-image output
-        const thumbPath = `${data.orderId}/${data.imageJobId}-thumb.jpg`;
-        outputUrl = await uploadFile(
-          Buckets.PROCESSED_IMAGES,
-          thumbPath,
-          videoResult.thumbnailBuffer,
-          'image/jpeg',
-        );
-
-        // Update ImageJob
-        await prisma.imageJob.update({
-          where: { id: data.imageJobId },
-          data: {
-            status: 'completed',
-            outputImageUrl: outputUrl,
-            videoOutputUrl: videoUrl,
-            pipeline: 'video_multi_shot',
-            durationMs: videoResult.durationMs,
-            completedAt: new Date(),
-          },
-        }).catch((err) => {
-          console.error(JSON.stringify({
-            event: 'db_update_failed',
-            error: err instanceof Error ? err.message : String(err),
-            context: 'imageJob_mark_completed_video',
-          }));
-        });
-
-        console.info(JSON.stringify({
-          event: 'video_shoot_complete',
-          job: job.id,
-          orderId: data.orderId,
-          durationMs: videoResult.durationMs,
-          videoSizeMB: (videoResult.videoBuffer.length / 1024 / 1024).toFixed(2),
-        }));
-
-      } catch (videoErr) {
-        console.error(JSON.stringify({
-          event: 'video_shoot_failed',
-          job: job.id,
-          orderId: data.orderId,
-          error: videoErr instanceof Error ? videoErr.message : String(videoErr),
-        }));
-
-        // Fallback: run normal image pipeline with style_lifestyle
-        const fallbackResult = await processImageNeverFail({
-          imageUrl: data.inputImageUrl,
-          style: 'style_lifestyle',
-          productCategory: data.productCategory,
-          voiceInstructions: data.voiceInstructions,
-          productProfile,
-        });
-
-        outputUrl = fallbackResult.outputUrl;
-        if (!outputUrl.includes('supabase.co')) {
-          const outputPath = `${data.orderId}/${data.imageJobId}-output.jpg`;
-          const outputBuffer = await fetch(outputUrl).then((r) => r.arrayBuffer());
-          outputUrl = await uploadFile(
-            Buckets.PROCESSED_IMAGES,
-            outputPath,
-            Buffer.from(outputBuffer),
-            'image/jpeg',
-          );
-        }
-
-        await prisma.imageJob.update({
-          where: { id: data.imageJobId },
-          data: {
-            status: 'completed',
-            outputImageUrl: outputUrl,
-            pipeline: 'composite',
-            style: 'style_lifestyle', // Update style to match actual output so delivery labels are correct
-            durationMs: fallbackResult.durationMs,
-            completedAt: new Date(),
-          },
-        }).catch((err) => {
-          console.error(JSON.stringify({
-            event: 'db_update_failed',
-            error: err instanceof Error ? err.message : String(err),
-            context: 'imageJob_mark_completed_video_fallback',
-          }));
-        });
-      }
-
-    } else {
-      // ── Normal image pipeline ───────────────────────────────────────────────
-      log('Using Never-Fail pipeline');
+    {
+      // ── Normal image pipeline ─────────────────────────────────────────────
+      log('Using Never-Fail pipeline (V5)');
 
       // Progress update — sent after 30s delay, only for the first job
       let stage2Sent = false;
@@ -334,21 +104,67 @@ export async function processImageJob(job: Job): Promise<void> {
             stage2Sent = true;
             await sendProgressUpdate(data.phoneNumber, 2, lang, config);
           }
-        }, 30_000);
+        }, 90_000);
+      }
+
+      // Send initial progress message (first job only)
+      if (isFirstJob) {
+        try {
+          const waProgress = new WhatsAppClient({
+            accessToken: config.WHATSAPP_ACCESS_TOKEN,
+            phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
+          });
+          await waProgress.sendText(data.phoneNumber, msgGotPhotoCreating(lang, 3));
+        } catch (err) {
+          console.warn(JSON.stringify({ event: 'progress_start_failed', error: String(err) }));
+        }
+      }
+
+      // Download reference photos (all inputImageUrls except index 0, which is the primary)
+      // The primary URL is already downloaded inside the pipeline via params.imageUrl.
+      const orderForRefs = await prisma.order.findUnique({
+        where: { id: data.orderId },
+        select: { inputImageUrls: true },
+      }).catch(() => null);
+
+      const allInputUrls = (orderForRefs?.inputImageUrls ?? []) as string[];
+      const referenceUrls = allInputUrls.slice(1); // skip index 0 (primary)
+      const referenceImageBuffers: Buffer[] = [];
+
+      for (const url of referenceUrls) {
+        try {
+          const buf = await downloadBuffer(url);
+          referenceImageBuffers.push(buf);
+        } catch (err) {
+          console.warn(JSON.stringify({
+            event: 'reference_download_failed',
+            url,
+            error: err instanceof Error ? err.message : String(err),
+          }));
+          // Continue — a missing reference is not fatal
+        }
+      }
+
+      if (referenceImageBuffers.length > 0) {
+        console.info(JSON.stringify({
+          event: 'reference_buffers_ready',
+          orderId: data.orderId,
+          referenceCount: referenceImageBuffers.length,
+        }));
       }
 
       const result = await processImageNeverFail({
         imageUrl: data.inputImageUrl,
-        style: data.style,
+        style: effectiveStyle,
         productCategory: data.productCategory,
         voiceInstructions: data.voiceInstructions,
-        productProfile, // Pre-computed profile — undefined if analysis failed or single-image
+        referenceImageBuffers: referenceImageBuffers.length > 0 ? referenceImageBuffers : undefined,
       });
 
-      // Cancel the stage 2 timer if pipeline finished before 15s
+      // Cancel the stage 2 timer if pipeline finished before 30s
       if (stage2Timer !== undefined) {
         clearTimeout(stage2Timer);
-        stage2Sent = true; // Prevent the timer callback from firing if it already expired
+        stage2Sent = true;
       }
 
       log(`Pipeline complete`, {
@@ -392,32 +208,6 @@ export async function processImageJob(job: Job): Promise<void> {
         } catch {
           // Cutout upload is non-critical — continue without it
           cutoutUrl = result.cutoutUrl;
-        }
-      }
-
-      // Handle story URL (9:16 format)
-      if (result.storyUrl) {
-        if (result.storyUrl.includes('supabase.co')) {
-          storyUrl = result.storyUrl;
-        } else try {
-          const storyPath = `${data.orderId}/${data.imageJobId}-story.jpg`;
-          const storyBuffer = await fetch(result.storyUrl).then((r) => r.arrayBuffer());
-          storyUrl = await uploadFile(Buckets.PROCESSED_IMAGES, storyPath, Buffer.from(storyBuffer), 'image/jpeg');
-        } catch {
-          storyUrl = result.storyUrl;
-        }
-      }
-
-      // Handle video URL (if Ken Burns was generated)
-      if (result.videoUrl) {
-        if (result.videoUrl.includes('supabase.co')) {
-          videoUrl = result.videoUrl;
-        } else try {
-          const videoPath = `${data.orderId}/${data.imageJobId}-video.mp4`;
-          const videoBuffer = await fetch(result.videoUrl).then((r) => r.arrayBuffer());
-          videoUrl = await uploadFile(Buckets.PROCESSED_IMAGES, videoPath, Buffer.from(videoBuffer), 'video/mp4');
-        } catch {
-          videoUrl = result.videoUrl;
         }
       }
 
@@ -475,64 +265,43 @@ export async function processImageJob(job: Job): Promise<void> {
         },
       });
 
-      // Check if all images in order are done
+      // Check if all images in the current round are done.
       const allJobs = await prisma.imageJob.findMany({
         where: { orderId: data.orderId },
       });
 
-      const allComplete = allJobs.every(
+      // For edit/redo: only look at jobs created after the last processingStartedAt.
+      // For initial orders: look at ALL jobs.
+      // isEditRound is determined by job count — more jobs than imageCount means a
+      // previous round exists, so we are in an edit round.
+      const isEditRound = allJobs.length > (order.imageCount ?? 0);
+      const currentRoundJobs = isEditRound && order.processingStartedAt
+        ? allJobs.filter((j: ImageJob) => {
+            const jobCreated = new Date(j.createdAt).getTime();
+            const roundStart = new Date(order.processingStartedAt!).getTime();
+            return jobCreated >= roundStart - 5000; // 5s buffer for clock skew
+          })
+        : allJobs;
+
+      const allComplete = currentRoundJobs.length > 0 && currentRoundJobs.every(
         (j: ImageJob) => j.status === 'completed' || j.status === 'failed',
       );
 
       if (allComplete) {
-        const completedJobs = allJobs.filter(
+        const jobsForDelivery = isEditRound ? currentRoundJobs : allJobs;
+
+        const completedJobs = jobsForDelivery.filter(
           (j: ImageJob) => j.status === 'completed' && j.outputImageUrl,
         );
         const completedUrls = completedJobs.map((j: ImageJob) => j.outputImageUrl!);
 
-        // Build style labels and separate video outputs from image outputs.
-        // video_multi_shot jobs store their MP4 URL in videoOutputUrl — collect them
-        // from the DB rows so all jobs (not just the last-completing one) are included.
         const sortedCompletedJobs = [...completedJobs].sort(
           (a: ImageJob, b: ImageJob) => (a.styleIndex ?? 0) - (b.styleIndex ?? 0),
         );
 
-        // For video shoot jobs that produced an actual video (videoOutputUrl set),
-        // keep them separate — their thumbnail is still shown as a still preview
-        // and their MP4 is delivered via allVideoUrls. For video-shoot jobs that
-        // fell back to a static image (videoOutputUrl is null), treat them as
-        // normal image output jobs with the fallback style 'style_lifestyle' for
-        // labeling purposes so indices stay aligned.
-        const videoShootJobsWithVideo = sortedCompletedJobs.filter(
-          (j: ImageJob) => j.style === 'style_video_shoot' && !!(j as any).videoOutputUrl,
-        );
-        const imageOutputJobs = sortedCompletedJobs.filter(
-          (j: ImageJob) =>
-            j.style !== 'style_video_shoot' ||
-            !(j as any).videoOutputUrl,
-        );
-
-        // Video URLs: DB videoOutputUrl for video-shoot jobs + any Ken Burns videoUrl from the
-        // current normal-pipeline job (local variable — DB has no column for those)
-        const dbVideoUrls = videoShootJobsWithVideo
-          .map((j: ImageJob) => (j as any).videoOutputUrl as string | null)
-          .filter((u): u is string => !!u);
-        const allVideoUrls = dbVideoUrls.length > 0
-          ? dbVideoUrls
-          : videoUrl
-          ? [videoUrl]
-          : [];
-
-        const allStoryUrls = storyUrl ? [storyUrl] : [];
-
-        // Deliver thumbnails for video-shoot jobs alongside normal image outputs.
-        // sortedCompletedUrls and styleLabels are both derived from imageOutputJobs
-        // so their lengths always match (1:1 correspondence).
-        const sortedCompletedUrls = imageOutputJobs.map((j: ImageJob) => j.outputImageUrl!);
-        const styleLabels = imageOutputJobs
-          .map((j: ImageJob) =>
-            j.style === 'style_video_shoot' ? 'style_lifestyle' : (j.style ?? null),
-          )
+        const sortedCompletedUrls = sortedCompletedJobs.map((j: ImageJob) => j.outputImageUrl!);
+        const styleLabels = sortedCompletedJobs
+          .map((j: ImageJob) => j.style ?? null)
           .filter((s): s is string => s !== null);
 
         // Fetch the user record — needed for both delivery paths below
@@ -540,78 +309,15 @@ export async function processImageJob(job: Job): Promise<void> {
           where: { phoneNumber: data.phoneNumber },
         });
 
-        // Check if the order is already completed (optimistic lock read — write comes AFTER delivery)
-        const currentOrder = await prisma.order.findUnique({
-          where: { id: data.orderId },
-          select: { status: true },
-        });
-
-        if (currentOrder && !['processing', 'payment_confirmed'].includes(currentOrder.status)) {
-          // Order was already completed (e.g. by another worker, or by a previous delivery run).
-          // For style-change edits the session will be in EDIT_PROCESSING — we still need to
-          // send the new output and feedback buttons so the user sees the updated result.
-          if (!user) {
-            log('User not found for delivery — cannot send images');
-            return;
-          }
-          const currentSession = await prisma.session.findFirst({ where: { userId: user.id } });
-
-          const isStyleChangeEdit = currentSession?.state === 'EDIT_PROCESSING';
-          if (isStyleChangeEdit) {
-            log('Style-change edit delivery — order already marked complete, sending output and feedback buttons');
-            const wa = new WhatsAppClient({
-              accessToken: config.WHATSAPP_ACCESS_TOKEN,
-              phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
-            });
-            // Style-change edits re-render a single image — deliver just the current output
-            await sendProcessedImages(
-              data.phoneNumber,
-              [outputUrl],
-              (user?.language as 'hi' | 'en') || 'hi',
-              user?.name ?? undefined,
-              wa,
-              videoUrl ? [videoUrl] : [],
-              storyUrl ? [storyUrl] : [],
-              data.style ? [data.style] : undefined,
-            );
-            if (user) {
-              await prisma.session.updateMany({
-                where: { userId: user.id, state: 'EDIT_PROCESSING' },
-                data: { state: 'DELIVERED', stateEnteredAt: new Date() },
-              });
-            }
-          } else {
-            log('Order already completed by another worker, skipping delivery');
-          }
-          return;
-        }
-
-        const wa = new WhatsAppClient({
-          accessToken: config.WHATSAPP_ACCESS_TOKEN,
-          phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
-        });
-
-        // Deliver ALL completed outputs BEFORE marking the order complete.
-        // If delivery fails, BullMQ will retry — order stays in processing state.
-        try {
-          await sendProcessedImages(
-            data.phoneNumber,
-            sortedCompletedUrls,
-            (user?.language as 'hi' | 'en') || 'hi',
-            user?.name ?? undefined,
-            wa,
-            allVideoUrls,
-            allStoryUrls,
-            styleLabels.length > 0 ? styleLabels : undefined,
-          );
-        } catch (deliveryErr) {
-          // Do NOT mark order complete — throw so BullMQ retries delivery
-          throw deliveryErr;
-        }
-
-        // Optimistic lock: mark order complete now that delivery succeeded
-        const updated = await prisma.order.updateMany({
-          where: { id: data.orderId, status: { in: ['processing', 'payment_confirmed'] } },
+        // ── Atomic delivery lock ─────────────────────────────────────────────
+        // Only ONE worker may deliver by claiming the transition to 'completed'
+        // BEFORE sending images. If another worker already claimed it (count=0),
+        // check whether this is a style-change edit that still needs delivery.
+        const deliveryClaim = await prisma.order.updateMany({
+          where: {
+            id: data.orderId,
+            status: { in: ['processing', 'payment_confirmed'] },
+          },
           data: {
             status: 'completed',
             outputImageUrls: sortedCompletedUrls,
@@ -619,9 +325,118 @@ export async function processImageJob(job: Job): Promise<void> {
           },
         });
 
-        if (updated.count === 0) {
-          log('Order completed by another worker during delivery window — delivery already sent');
+        if (deliveryClaim.count === 0) {
+          // Another worker already claimed delivery. Check for style-change edit path
+          // where the session is EDIT_PROCESSING — that still requires sending the new output.
+          if (!user) {
+            log('Delivery already claimed by another worker — skipping');
+            return;
+          }
+          const currentSession = await prisma.session.findFirst({ where: { userId: user.id } });
+          const isStyleChangeEdit = currentSession?.state === 'EDIT_PROCESSING';
+          if (isStyleChangeEdit) {
+            log('Style-change edit delivery — order already marked complete, sending output and feedback buttons');
+            const wa = new WhatsAppClient({
+              accessToken: config.WHATSAPP_ACCESS_TOKEN,
+              phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
+            });
+            await sendProcessedImages(
+              data.phoneNumber,
+              [outputUrl],
+              (user?.language as 'hi' | 'en') || 'hi',
+              user?.name ?? undefined,
+              wa,
+              [],
+              [],
+              effectiveStyle ? [effectiveStyle] : undefined,
+            );
+            await prisma.session.updateMany({
+              where: { userId: user.id, state: 'EDIT_PROCESSING' },
+              data: { state: 'DELIVERED', stateEnteredAt: new Date() },
+            });
+          } else {
+            log('Delivery already claimed by another worker — skipping');
+          }
+          return;
         }
+
+        // We won the atomic race — now deliver. If delivery fails, the order is
+        // already marked complete so the user can retry via "Make a change".
+        const wa = new WhatsAppClient({
+          accessToken: config.WHATSAPP_ACCESS_TOKEN,
+          phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID,
+        });
+
+        // Re-fetch authoritative output URLs from image_jobs to avoid race condition
+        // where order.output_image_urls is stale (concurrent workers may not have
+        // committed their imageJob updates at the time allJobs was first fetched).
+        const expectedJobCount = currentRoundJobs.length;
+        let deliveryJobs = await prisma.imageJob.findMany({
+          where: {
+            orderId: data.orderId,
+            status: 'completed',
+            outputImageUrl: { not: null },
+          },
+          orderBy: { styleIndex: 'asc' },
+          select: {
+            styleIndex: true,
+            outputImageUrl: true,
+            cutoutUrl: true,
+            style: true,
+          },
+        });
+
+        if (deliveryJobs.length < expectedJobCount) {
+          // In-flight DB commits from concurrent workers haven't landed yet — wait briefly
+          await new Promise(r => setTimeout(r, 1500));
+          const retryJobs = await prisma.imageJob.findMany({
+            where: {
+              orderId: data.orderId,
+              status: 'completed',
+              outputImageUrl: { not: null },
+            },
+            orderBy: { styleIndex: 'asc' },
+            select: {
+              styleIndex: true,
+              outputImageUrl: true,
+              cutoutUrl: true,
+              style: true,
+            },
+          });
+          if (retryJobs.length > deliveryJobs.length) {
+            deliveryJobs = retryJobs;
+          }
+        }
+
+        const finalOutputUrls = deliveryJobs.map(j => j.outputImageUrl!).filter(Boolean);
+        const finalStyleLabels = deliveryJobs.map(j => j.style ?? '').filter(Boolean);
+
+        console.info(JSON.stringify({
+          event: 'delivery_url_collection',
+          orderId: data.orderId,
+          expectedCount: expectedJobCount,
+          collectedCount: finalOutputUrls.length,
+          retried: deliveryJobs.length < expectedJobCount,
+        }));
+
+        // Send "Ready!" signal before images — gives images time to load on slow connections
+        try {
+          await wa.sendText(data.phoneNumber, msgProgressReadyToSend((user?.language as 'hi' | 'en') || 'hi'));
+          await new Promise(r => setTimeout(r, 2000)); // 2s gap so message arrives before images
+        } catch (err) {
+          console.warn(JSON.stringify({ event: 'progress_ready_to_send_failed', error: String(err) }));
+        }
+
+        await sendProcessedImages(
+          data.phoneNumber,
+          finalOutputUrls,
+          (user?.language as 'hi' | 'en') || 'hi',
+          user?.name ?? undefined,
+          wa,
+          [],
+          [],
+          finalStyleLabels.length > 0 ? finalStyleLabels : undefined,
+        );
 
         // Transition session to DELIVERED from PROCESSING, EDIT_PROCESSING, IDLE, or
         // AWAITING_REVISION_PAYMENT. The last case covers a race where the user paid for
@@ -705,9 +520,7 @@ export async function processImageJob(job: Job): Promise<void> {
           // All images failed
           await wa.sendText(
             data.phoneNumber,
-            lang === 'hi'
-              ? 'Maaf kijiye, aapki photo process nahi ho payi. Kripya dobara try karein.'
-              : 'Sorry, we could not process your photo. Please try again.',
+            msgPhotoProcessingFailed(lang),
           );
         }
 

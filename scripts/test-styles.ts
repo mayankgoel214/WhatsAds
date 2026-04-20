@@ -1,6 +1,6 @@
 /**
  * Test all styles with the same product image.
- * Run: cd /Users/lending/Clickkar && npx tsx scripts/test-styles.ts
+ * Run: cd /Users/lending/Autmn && npx tsx scripts/test-styles.ts
  */
 
 import { readFileSync, mkdirSync, writeFileSync } from 'fs';
@@ -18,7 +18,7 @@ function loadEnv(envPath: string): void {
   }
 }
 
-loadEnv(resolve('/Users/lending/Clickkar/.env'));
+loadEnv(resolve('/Users/lending/Autmn/.env'));
 
 import { processProductImage } from '../packages/ai/dist/index.js';
 

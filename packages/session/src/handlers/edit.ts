@@ -10,15 +10,15 @@
  * Checks revision limits (2 free per order, Rs 29 after).
  */
 
-import type { WhatsAppClient } from '@whatsads/whatsapp';
-import { prisma } from '@whatsads/db';
-import type { Session, User } from '@whatsads/db';
-import { getImageQueue, getPaymentCheckQueue } from '@whatsads/queue';
-import { downloadMedia } from '@whatsads/whatsapp';
-import { uploadFile, Buckets } from '@whatsads/storage';
-import { transcribeVoiceNote } from '@whatsads/ai';
-import { parseEditInstructions } from '@whatsads/ai';
-import { createPaymentLink } from '@whatsads/payment';
+import type { WhatsAppClient } from '@autmn/whatsapp';
+import { prisma } from '@autmn/db';
+import type { Session, User } from '@autmn/db';
+import { getImageQueue, getPaymentCheckQueue } from '@autmn/queue';
+import { downloadMedia } from '@autmn/whatsapp';
+import { uploadFile, Buckets } from '@autmn/storage';
+import { transcribeVoiceNote } from '@autmn/ai';
+import { parseEditInstructions } from '@autmn/ai';
+import { createPaymentLink } from '@autmn/payment';
 import { transitionTo } from '../db-helpers.js';
 import {
   msgEditProcessing,
@@ -31,7 +31,7 @@ import {
   EDIT_REVISION_PAISE,
   PAYMENT_CHECK_DELAY_MS,
 } from '../types.js';
-import type { MessageContext } from '../types.js';
+import type { MessageContext, Language } from '../types.js';
 import { logger } from '../logger.js';
 
 // ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ export async function handleAwaitingEdit(
   message: MessageContext,
   wa: WhatsAppClient,
 ): Promise<void> {
-  const lang = (user.language as 'hi' | 'en') || 'hi';
+  const lang = (user.language as Language) || 'hinglish';
 
   if (!session.currentOrderId) {
     logger.error('No current order in AWAITING_EDIT', { phoneNumber: session.phoneNumber });
@@ -161,7 +161,7 @@ export async function handleAwaitingEdit(
         customerPhone: session.phoneNumber.replace(/^\+/, ''),
         customerName: user.name ?? undefined,
         amount: EDIT_REVISION_PAISE,
-        description: `Clickkar Edit - Order ${order.id.slice(0, 8)}`,
+        description: `Autmn Edit - Order ${order.id.slice(0, 8)}`,
         expiresInMinutes: 30,
       });
 
@@ -213,7 +213,7 @@ export async function handleAwaitingEdit(
     // Multi-photo edit: parse per-photo instructions when there are multiple photos
     if (imageUrls.length > 1 && editInstructions) {
       try {
-        const { parsePerPhotoInstructions } = await import('@whatsads/ai');
+        const { parsePerPhotoInstructions } = await import('@autmn/ai');
         const parseResult = await parsePerPhotoInstructions({
           imageUrls,
           rawInstructions: editInstructions,
@@ -357,7 +357,7 @@ export async function handleEditProcessing(
   message: MessageContext,
   wa: WhatsAppClient,
 ): Promise<void> {
-  const lang = (user.language as 'hi' | 'en') || 'hi';
+  const lang = (user.language as Language) || 'hinglish';
 
   // User sent a message while edit is processing — acknowledge
   await wa.sendText(
