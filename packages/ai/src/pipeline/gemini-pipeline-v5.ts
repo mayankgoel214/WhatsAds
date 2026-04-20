@@ -17,7 +17,6 @@ import { lightAnalyze, type LightAnalysis } from './light-analyzer.js';
 import { getStylePromptV5 } from './style-prompts-v5.js';
 import { geminiGenerateImage } from './gemini-generate.js';
 import { compositeProductOntoBackground } from './composite-engine.js';
-import { simpleQA } from './simple-qa.js';
 import {
   postProcessFinal,
   addAILabel,
@@ -26,7 +25,19 @@ import {
   removeBackground,
 } from './fallback.js';
 import { runDeterministicChecks } from '../qa/deterministic-checks.js';
+import { combinedQualityCheck } from '../qa/combined-qa.js';
 import type { ProcessImageParams, ProcessImageResult } from './orchestrator.js';
+
+// ---------------------------------------------------------------------------
+// QA thresholds — mirror V3 orchestrator (QA_PASS_SCORE / QA_FIDELITY_MIN).
+// V5 previously shipped simpleQA (3 binary checks) which gave every output a
+// passing score 75 regardless of fidelity. This let wrong-product outputs
+// ship. Match V3's thresholds so fidelity breaks fail-closed.
+// ---------------------------------------------------------------------------
+const V5_QA_PASS_SCORE = 65;
+const V5_QA_FIDELITY_MIN = 25;
+/** Best-of fallback threshold — still better than dropping to Tier 2. */
+const V5_BEST_OF_MIN_SCORE = 55;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -422,9 +433,29 @@ export async function processProductImageV5(
   }));
 
   // ── Stage 4: Generation loop (attempt 1, then 1 retry) ────────────────────
+  //
+  // QA gate: combinedQualityCheck with full fidelity scoring (0-100 score,
+  // 0-35 productFidelityScore, fundamental error / anatomy / integration
+  // checks). Pass criteria mirror the V3 orchestrator:
+  //   score >= V5_QA_PASS_SCORE (65)
+  //   AND productFidelityScore >= V5_QA_FIDELITY_MIN (25) — skipped for
+  //       style_with_model since Gemini intentionally regenerates the
+  //       product into the person's hand and strict fidelity is wrong.
+  //   AND no fundamental error / random text / sketches
+  //   AND humanAnatomy != 'major_issue' AND productIntegration != 'impossible'
+  //
+  // If neither attempt passes, we keep the best-scored attempt — delivering
+  // a 60-score ad is still better than dropping to Tier 2 (styled studio,
+  // qaScore 50). If even the best-of is below V5_BEST_OF_MIN_SCORE, throw
+  // so never-fail falls through to Tier 2.
+  // ---------------------------------------------------------------------------
 
-  let outputBuffer: Buffer | null = null;
-  let cutoutBuffer: Buffer | null = null;
+  const checkFidelity = !isWithModel;
+
+  let bestBuffer: Buffer | null = null;
+  let bestScore = -1;
+  let bestFidelityScore = -1;
+  let bestQa: Awaited<ReturnType<typeof combinedQualityCheck>> | null = null;
   let qaPass = false;
   let attempts = 0;
 
@@ -474,34 +505,104 @@ export async function processProductImageV5(
       postProcessed = candidateBuffer;
     }
 
-    // QA check
-    const qa = await simpleQA(croppedBuffer, postProcessed);
+    // QA check — full fidelity-aware scoring
+    const qa = await combinedQualityCheck(croppedBuffer, postProcessed, {
+      checkFidelity,
+      voiceInstructions,
+    });
+
     console.info(JSON.stringify({
       event: 'v5_qa_result',
       attempt,
       pass: qa.pass,
-      distorted: qa.distorted,
-      randomText: qa.randomText,
-      badAnatomy: qa.badAnatomy,
+      score: qa.score,
+      fidelityScore: qa.productFidelityScore,
+      fidelity: qa.productFidelity,
+      hasFundamentalError: qa.hasFundamentalError,
+      hasRandomText: qa.hasRandomText,
+      humanAnatomy: qa.humanAnatomy,
+      productIntegration: qa.productIntegration,
+      issues: qa.issues,
+      checkFidelity,
     }));
 
-    outputBuffer = postProcessed;
+    // Hard rejection on fundamental errors — don't consider this as "best-of".
+    // Retry if attempts remain; otherwise fall through to best-of / Tier 2.
+    if (qa.hasFundamentalError) {
+      console.warn(JSON.stringify({
+        event: 'v5_fundamental_error_detected',
+        attempt,
+        description: qa.fundamentalErrorDescription,
+      }));
+      continue;
+    }
 
-    if (qa.pass) {
+    // Track best-of across attempts
+    if (qa.score > bestScore) {
+      bestScore = qa.score;
+      bestFidelityScore = qa.productFidelityScore;
+      bestBuffer = postProcessed;
+      bestQa = qa;
+    }
+
+    const fidelityOk = !checkFidelity || qa.productFidelityScore >= V5_QA_FIDELITY_MIN;
+    const passesGate =
+      qa.pass &&
+      qa.score >= V5_QA_PASS_SCORE &&
+      fidelityOk &&
+      qa.humanAnatomy !== 'major_issue' &&
+      qa.productIntegration !== 'impossible';
+
+    if (passesGate) {
       qaPass = true;
       break; // QA passed — no retry needed
     }
 
-    if (isRetry) {
-      // Deliver retry result regardless — better than falling to Tier 2
-      console.info(JSON.stringify({ event: 'v5_qa_failed_delivering_retry', attempt }));
-    } else {
-      console.info(JSON.stringify({ event: 'v5_qa_failed_retrying', attempt }));
-    }
+    console.info(JSON.stringify({
+      event: isRetry ? 'v5_qa_failed_using_best_of' : 'v5_qa_failed_retrying',
+      attempt,
+      score: qa.score,
+      fidelityScore: qa.productFidelityScore,
+    }));
   }
 
-  if (!outputBuffer) {
-    throw new Error('v5: Generation produced no output after all attempts');
+  // ── Decide final buffer — either QA-passed or best-of-acceptable ─────────
+  //
+  // If we never passed QA, deliver the best-of only when it clears the
+  // degraded threshold AND (for fidelity-checked styles) still preserves the
+  // product enough to be recognizable. Otherwise throw so Tier 2 takes over.
+
+  let outputBuffer: Buffer | null = null;
+  let finalScore = 0;
+
+  if (qaPass && bestBuffer && bestQa) {
+    outputBuffer = bestBuffer;
+    finalScore = bestScore;
+  } else if (
+    bestBuffer &&
+    bestScore >= V5_BEST_OF_MIN_SCORE &&
+    (!checkFidelity || bestFidelityScore >= V5_QA_FIDELITY_MIN)
+  ) {
+    outputBuffer = bestBuffer;
+    finalScore = bestScore;
+    console.info(JSON.stringify({
+      event: 'v5_delivering_best_of',
+      score: bestScore,
+      fidelityScore: bestFidelityScore,
+    }));
+  } else {
+    console.warn(JSON.stringify({
+      event: 'v5_rejecting_output_falling_to_tier2',
+      bestScore,
+      bestFidelityScore,
+      reason:
+        bestBuffer === null
+          ? 'no_candidate_survived_fundamental_error_gate'
+          : 'best_of_below_thresholds',
+    }));
+    throw new Error(
+      `v5: QA gate failed — bestScore=${bestScore} bestFidelity=${bestFidelityScore} (below thresholds, falling to Tier 2)`,
+    );
   }
 
   // ── Stage 5: Upload output + cutout, then return ──────────────────────────
@@ -519,6 +620,8 @@ export async function processProductImageV5(
     attempts,
     qaPass,
     hadAnalysis,
+    finalScore,
+    finalFidelityScore: bestFidelityScore,
     durationMs,
   }));
 
@@ -526,7 +629,7 @@ export async function processProductImageV5(
     outputUrl,
     outputBuffer,
     cutoutUrl,
-    qaScore: qaPass ? 75 : 55, // Binary: pass = good score, fail-but-delivered = acceptable
+    qaScore: finalScore,
     pipeline: 'primary',
     attempts,
     durationMs,
