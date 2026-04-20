@@ -351,16 +351,27 @@ export async function processProductImageV5(
   const croppedBuffer = await detectAndCropBorder(processedBuffer);
 
   // ── Stage 2: Light analysis ────────────────────────────────────────────────
+  //
+  // lightAnalyze now throws on timeout / parse failure instead of silently
+  // returning defaults. We catch here and continue with hadAnalysis=false.
+  // The generation still has the input image + reference buffers (Gemini i2i
+  // carries the product identity), so a blind run can still produce a usable
+  // ad — it just can't route on productName/category. That is better than
+  // building a prompt that says "product / other" when the user sent a
+  // Rubik's cube and got three wrong-color ads back.
 
+  const allBuffersForAnalysis = [croppedBuffer, ...(params.referenceImageBuffers ?? [])];
   let analysis: LightAnalysis;
+  let hadAnalysis = true;
   try {
-    const allBuffersForAnalysis = [croppedBuffer, ...(params.referenceImageBuffers ?? [])];
     analysis = await lightAnalyze(allBuffersForAnalysis);
   } catch (err) {
+    hadAnalysis = false;
     console.warn(JSON.stringify({
-      event: 'v5_light_analysis_error',
+      event: 'v5_light_analysis_failed',
+      photoCount: allBuffersForAnalysis.length,
       error: err instanceof Error ? err.message : String(err),
-      fallback: 'conservative defaults',
+      fallback: 'blind_generation_with_references',
     }));
     analysis = {
       productName: 'product',
@@ -402,6 +413,7 @@ export async function processProductImageV5(
     event: 'v5_track_selected',
     track,
     style,
+    hadAnalysis,
     productName: analysis.productName,
     physicalSize: analysis.physicalSize,
     productCategory: analysis.productCategory,
@@ -506,6 +518,7 @@ export async function processProductImageV5(
     style,
     attempts,
     qaPass,
+    hadAnalysis,
     durationMs,
   }));
 

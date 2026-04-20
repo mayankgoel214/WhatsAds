@@ -81,7 +81,28 @@ Answer these 10 questions as JSON. Nothing else.
 Return ONLY valid JSON, no markdown fences.`;
 }
 
-const TIMEOUT_MS = 10_000;
+// ---------------------------------------------------------------------------
+// Timeout policy
+// ---------------------------------------------------------------------------
+//
+// Gemini multi-image vision analysis regularly takes 8–15s with 2–3 images.
+// A flat 10s timeout hit ~100% of 3-photo calls in production (observed
+// 2026-04-20), silently collapsing the analysis to conservative defaults
+// and producing wrong-product ads. Scale with photo count and cap at 35s.
+//
+// Base budget covers the 1-photo path; each extra photo adds 5s; the cap
+// keeps the worker responsive if Gemini hangs. The worker's outer budget
+// for the whole tier is ~4 min so this is safe.
+
+const BASE_TIMEOUT_MS = 12_000;
+const PER_EXTRA_PHOTO_MS = 5_000;
+const MAX_TIMEOUT_MS = 35_000;
+
+export function computeLightAnalyzeTimeoutMs(bufferCount: number): number {
+  if (bufferCount <= 1) return BASE_TIMEOUT_MS;
+  const scaled = BASE_TIMEOUT_MS + PER_EXTRA_PHOTO_MS * (bufferCount - 1);
+  return Math.min(scaled, MAX_TIMEOUT_MS);
+}
 
 // ---------------------------------------------------------------------------
 // Main export
@@ -99,10 +120,16 @@ export async function lightAnalyze(buffers: Buffer[]): Promise<LightAnalysis> {
       '',
   });
 
+  const timeoutMs = computeLightAnalyzeTimeoutMs(buffers.length);
   const timeoutPromise = new Promise<never>((_, reject) =>
     setTimeout(
-      () => reject(new Error('lightAnalyze timed out after 10s')),
-      TIMEOUT_MS,
+      () =>
+        reject(
+          new Error(
+            `lightAnalyze timed out after ${timeoutMs}ms (photoCount=${buffers.length})`,
+          ),
+        ),
+      timeoutMs,
     ),
   );
 
@@ -113,6 +140,9 @@ export async function lightAnalyze(buffers: Buffer[]): Promise<LightAnalysis> {
     { text: `Photo ${idx + 1}:` },
     { inlineData: { mimeType: 'image/jpeg' as const, data: buf.toString('base64') } },
   ]);
+
+  // Capture rawText outside the parse scope so we can log it on JSON.parse failure.
+  let rawText = '';
 
   try {
     const response = await Promise.race([
@@ -132,19 +162,51 @@ export async function lightAnalyze(buffers: Buffer[]): Promise<LightAnalysis> {
       timeoutPromise,
     ]);
 
-    const rawText =
-      response.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    rawText = response.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
     const cleaned = rawText
       .replace(/^```(?:json)?\s*/i, '')
       .replace(/\s*```$/i, '')
       .trim();
-    const parsed: unknown = JSON.parse(cleaned);
-    const result = LightAnalysisSchema.parse(parsed);
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch (parseErr) {
+      console.warn(
+        JSON.stringify({
+          event: 'light_analyze_parse_failed',
+          stage: 'json_parse',
+          bufferCount: buffers.length,
+          rawText: rawText.slice(0, 500),
+          error:
+            parseErr instanceof Error ? parseErr.message : String(parseErr),
+        }),
+      );
+      throw parseErr;
+    }
+
+    let result: LightAnalysis;
+    try {
+      result = LightAnalysisSchema.parse(parsed);
+    } catch (schemaErr) {
+      console.warn(
+        JSON.stringify({
+          event: 'light_analyze_parse_failed',
+          stage: 'schema_parse',
+          bufferCount: buffers.length,
+          rawText: rawText.slice(0, 500),
+          error:
+            schemaErr instanceof Error ? schemaErr.message : String(schemaErr),
+        }),
+      );
+      throw schemaErr;
+    }
 
     console.info(
       JSON.stringify({
         event: 'v5_light_analysis_done',
         photoCount: buffers.length,
+        timeoutMs,
         productName: result.productName,
         category: result.productCategory,
         hasBranding: result.hasBranding,
@@ -158,25 +220,12 @@ export async function lightAnalyze(buffers: Buffer[]): Promise<LightAnalysis> {
 
     return result;
   } catch (err) {
-    console.warn(
-      JSON.stringify({
-        event: 'v5_light_analysis_failed',
-        error: err instanceof Error ? err.message : String(err),
-        fallback: 'using conservative defaults',
-      }),
-    );
-
-    return {
-      productName: 'product',
-      productCategory: 'other',
-      hasBranding: true,
-      physicalSize: 'medium',
-      dominantColors: ['neutral'],
-      typicalSetting: 'tabletop',
-      usable: true,
-      itemCount: 1,
-      items: ['product'],
-      setDescription: null,
-    };
+    // Surface the failure to the caller. The V5 pipeline's outer try/catch
+    // decides whether to retry, degrade to a blind generation, or fall
+    // through to Tier 2. We no longer silently return conservative defaults
+    // — that path caused wrong-product prompts to reach generation.
+    throw err instanceof Error
+      ? err
+      : new Error(`lightAnalyze failed: ${String(err)}`);
   }
 }
