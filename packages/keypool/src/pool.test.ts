@@ -275,6 +275,49 @@ describe('KeyPool — call() wrapper', () => {
   });
 });
 
+describe('KeyPool — sync accessor (getKeySync + reportLastOutcome)', () => {
+  it('rotates keys round-robin across sync calls', () => {
+    const pool = new KeyPool('gemini', ['k1-abcxyz', 'k2-abcxyz', 'k3-abcxyz']);
+    const first = pool.getKeySync();
+    const second = pool.getKeySync();
+    const third = pool.getKeySync();
+    const fourth = pool.getKeySync();
+    expect(new Set([first, second, third]).size).toBe(3);
+    expect(fourth).toBe(first);
+  });
+
+  it('skips a key marked unhealthy via reportLastOutcome 429', () => {
+    const pool = new KeyPool('gemini', ['k1-abcxyz', 'k2-abcxyz']);
+    pool.getKeySync(); // picks k1
+    pool.reportLastOutcome({ success: false, errorCode: 429 });
+    const next = pool.getKeySync();
+    const again = pool.getKeySync();
+    // k1 is cooling — only k2 should be returned
+    expect(next).toBe('k2-abcxyz');
+    expect(again).toBe('k2-abcxyz');
+  });
+
+  it('returns fallback when all keys are cooling (does not throw)', () => {
+    const clock = makeClock();
+    const pool = new KeyPool('gemini', ['only-key-abcxyz'], {
+      coolDownOn429Ms: 60_000,
+      now: clock.now,
+    });
+    pool.getKeySync();
+    pool.reportLastOutcome({ success: false, errorCode: 429 });
+    // only key is cooling — sync accessor returns it anyway (best-effort)
+    const fallback = pool.getKeySync();
+    expect(fallback).toBe('only-key-abcxyz');
+  });
+
+  it('records success via reportLastOutcome', () => {
+    const pool = new KeyPool('gemini', ['only-key-abcxyz']);
+    pool.getKeySync();
+    pool.reportLastOutcome({ success: true });
+    expect(pool.health().keys[0]!.successCount).toBe(1);
+  });
+});
+
 describe('KeyPool — health report', () => {
   it('reports totals and masks keys', async () => {
     const pool = new KeyPool('gemini', ['aaa-bbb-ccc', 'ddd-eee-fff']);

@@ -25,6 +25,8 @@ export { readKeysFromEnv, providerEnvSpec } from './env.js';
 export {
   getKeyPool,
   hasKeyPool,
+  getProviderKey,
+  reportProviderResult,
   allHealth,
   reviveKey,
   setKeyPoolEventSink,

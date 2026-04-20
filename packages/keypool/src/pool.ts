@@ -43,6 +43,7 @@ export class KeyPool {
     now: () => number;
   };
   private rrCursor = 0;
+  private lastSyncKeyHint: string | null = null;
 
   constructor(provider: Provider, keys: string[], config: KeyPoolConfig = {}) {
     this.provider = provider;
@@ -197,6 +198,66 @@ export class KeyPool {
       }
     }
     throw lastErr ?? new Error(`[keypool] ${this.provider}: call failed after ${maxAttempts} attempts`);
+  }
+
+  /**
+   * Synchronous single-shot key accessor.
+   *
+   * Returns the next healthy key by round-robin. Advances the cursor.
+   * If all keys are in cool-down, returns the first key regardless of
+   * health (best-effort fallback — caller will discover the 429 on use
+   * and can report it via reportLastOutcome).
+   *
+   * Use this for call sites where introducing an async acquire/release
+   * lifecycle would require a big refactor. Health attribution is then
+   * best-effort: call reportLastOutcome() from the caller's catch block.
+   */
+  getKeySync(): string {
+    this.recoverExpired();
+    const selected = this.selectHealthy();
+    if (selected) {
+      this.lastSyncKeyHint = selected.hint;
+      return selected.key;
+    }
+    const fallback = this.entries[0];
+    if (!fallback) throw new KeyPoolExhaustedError(this.provider);
+    this.lastSyncKeyHint = fallback.hint;
+    this.emit({ type: 'exhausted', provider: this.provider, waitingMs: 0 });
+    return fallback.key;
+  }
+
+  /**
+   * Report the outcome of the most-recent getKeySync() call. Best-effort:
+   * the pool records success/failure against whichever key was last handed
+   * out. This is racy under concurrency, but for single-request handler
+   * scopes (the Autmn pipeline model) it's accurate.
+   */
+  reportLastOutcome(outcome: ReleaseOutcome): void {
+    const hint = this.lastSyncKeyHint;
+    if (!hint) return;
+    const entry = this.entries.find((e) => e.hint === hint);
+    if (!entry) return;
+    if (outcome.success) {
+      entry.successCount += 1;
+      this.emit({ type: 'released_success', provider: this.provider, hint });
+      return;
+    }
+    const reason = classifyFailure({ errorCode: outcome.errorCode, reason: outcome.reason });
+    entry.failureCount += 1;
+    entry.lastFailureAt = this.config.now();
+    entry.lastFailureReason = reason;
+    const coolDownMs = this.coolDownForReason(reason);
+    if (coolDownMs === null) {
+      this.emit({ type: 'released_failure', provider: this.provider, hint, reason, coolDownMs: null });
+      return;
+    }
+    entry.healthy = false;
+    entry.coolDownUntil =
+      coolDownMs === Number.POSITIVE_INFINITY
+        ? Number.POSITIVE_INFINITY
+        : this.config.now() + coolDownMs;
+    this.emit({ type: 'released_failure', provider: this.provider, hint, reason, coolDownMs });
+    this.emit({ type: 'marked_unhealthy', provider: this.provider, hint, coolDownUntil: entry.coolDownUntil, reason });
   }
 
   /** Manual health override — force a key back to healthy. For /admin/keypool/revive. */

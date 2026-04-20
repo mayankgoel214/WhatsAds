@@ -79,6 +79,32 @@ export function allHealth(): Record<Provider, ProviderHealth | null> {
   return out;
 }
 
+/**
+ * Synchronous single-shot key accessor for a provider.
+ * Rotates round-robin, skips cool-down keys. For Autmn's existing
+ * AI call sites that pull the key inline and aren't easily refactored
+ * to acquire/release lifecycles.
+ *
+ * Pair with `reportProviderResult()` in the caller's catch/finally to
+ * give the pool health attribution. If never reported, the pool still
+ * rotates across calls — just without fine-grained health tracking.
+ */
+export function getProviderKey(provider: Provider): string {
+  return getKeyPool(provider).getKeySync();
+}
+
+/**
+ * Report the outcome of the most-recent `getProviderKey(provider)` call.
+ * Best-effort — accurate when handlers are single-request-scoped (Autmn's
+ * worker processor model is).
+ */
+export function reportProviderResult(
+  provider: Provider,
+  outcome: { success: true } | { success: false; errorCode?: number | string },
+): void {
+  getKeyPool(provider).reportLastOutcome(outcome);
+}
+
 /** Manual health override. Returns true if a key was revived. */
 export function reviveKey(provider: Provider, hint: string): boolean {
   if (!registry) registry = buildRegistry();
