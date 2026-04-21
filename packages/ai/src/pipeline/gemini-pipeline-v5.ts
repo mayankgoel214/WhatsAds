@@ -73,6 +73,10 @@ const V5_CANDIDATE_MIN_COMPOSITE = 50;
 export interface ProcessImageV5Params extends ProcessImageParams {
   /** Pre-downloaded reference image buffers for multi-angle orders. */
   referenceImageBuffers?: Buffer[];
+  /** Override the Gemini image model for this pipeline run.
+   *  Used by the 3-tier never-fail architecture to route Tier 1 (Pro) vs Tier 2 (Flash)
+   *  through the same V5 code path with a different model. */
+  modelOverride?: string;
 }
 
 type Track = 'COMPOSITE' | 'DIRECT';
@@ -357,6 +361,7 @@ async function runDirectTrack(
   voiceInstructions: string | undefined,
   referenceBuffers: Buffer[] | undefined,
   temperatures: number[],
+  modelOverride?: string,
 ): Promise<CandidateSelection> {
   const prompt = getStylePromptV5(style, 'DIRECT', analysis, voiceInstructions);
 
@@ -366,6 +371,7 @@ async function runDirectTrack(
       prompt,
       temperature: temperatures[0],
       referenceImageBuffers: referenceBuffers,
+      model: modelOverride,
     });
     return selectBestCandidate(processedBuffer, [result.imageBuffer]);
   }
@@ -378,6 +384,7 @@ async function runDirectTrack(
         prompt,
         temperature: temp,
         referenceImageBuffers: referenceBuffers,
+        model: modelOverride,
       }).then(r => r.imageBuffer),
     ),
   );
@@ -425,6 +432,7 @@ export async function processProductImageV5(
   const totalStart = Date.now();
   const style = params.style ?? 'style_lifestyle';
   const voiceInstructions = params.voiceInstructions;
+  const modelOverride = params.modelOverride;
 
   console.info(JSON.stringify({
     event: 'v5_pipeline_start',
@@ -547,7 +555,7 @@ export async function processProductImageV5(
     attempts = attempt;
     const isRetry = attempt > 1;
 
-    console.info(JSON.stringify({ event: 'v5_generation_attempt', attempt, track }));
+    console.info(JSON.stringify({ event: 'v5_generation_attempt', attempt, track, model: modelOverride ?? 'env_default' }));
 
     let candidateBuffer: Buffer | null = null;
 
@@ -566,6 +574,7 @@ export async function processProductImageV5(
         voiceInstructions,
         params.referenceImageBuffers,
         temperatures,
+        modelOverride,
       );
 
       // Composite score gate: if the best candidate from this attempt didn't

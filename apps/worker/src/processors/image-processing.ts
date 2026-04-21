@@ -463,6 +463,31 @@ export async function processImageJob(job: Job): Promise<void> {
     console.error(JSON.stringify({ event: 'image_processing_failed', job: job.id, orderId: data.orderId, error: errorMsg }));
     log('Image processing failed', { error: errorMsg });
 
+    // Detect the needs_refund signal from never-fail-pipeline — all 3 AI tiers exhausted.
+    // Mark the order failed immediately and log the event so the founder can action it.
+    // The actual Razorpay refund + WhatsApp apology is a follow-up (WS1 scope boundary).
+    const needsRefund = errorMsg.includes('[needs_refund: true]');
+    if (needsRefund) {
+      console.error(JSON.stringify({
+        event: 'order_needs_refund',
+        orderId: data.orderId,
+        phoneNumber: data.phoneNumber,
+        reason: 'All 3 AI tiers (Pro → Flash → OpenAI) exhausted',
+        action_required: 'Manual Razorpay refund + WhatsApp apology — see incident runbook',
+      }));
+      // Mark order as failed immediately — do not rely on BullMQ retry to surface it
+      await prisma.order.update({
+        where: { id: data.orderId },
+        data: { status: 'failed', processingCompletedAt: new Date() },
+      }).catch((dbErr) => {
+        console.error(JSON.stringify({
+          event: 'db_update_failed',
+          error: dbErr instanceof Error ? dbErr.message : String(dbErr),
+          context: 'order_mark_failed_needs_refund',
+        }));
+      });
+    }
+
     // Update job as failed
     await prisma.imageJob.update({
       where: { id: data.imageJobId },

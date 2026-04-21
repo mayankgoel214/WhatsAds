@@ -15,6 +15,10 @@ export interface GeminiGenerateParams {
    *  to give the model additional angles/details for multi-angle orders.
    *  Gemini 3 Pro Image supports up to 6 distinct objects (primary + 5 refs). */
   referenceImageBuffers?: Buffer[];
+  /** Override the Gemini image model for this call. When absent, falls back to the
+   *  GEMINI_IMAGE_MODEL env var (or the hard-coded default). Use this to route
+   *  Tier 1 (Pro) vs Tier 2 (Flash) without mutating process.env. */
+  model?: string;
 }
 
 export interface GeminiEditParams {
@@ -74,7 +78,8 @@ const TIMEOUT_MS = 90_000;
 export async function geminiGenerateImage(
   params: GeminiGenerateParams,
 ): Promise<GeminiGenerateResult> {
-  const { inputImageBuffer, prompt, temperature = 0.7, referenceImageBuffers } = params;
+  const { inputImageBuffer, prompt, temperature = 0.7, referenceImageBuffers, model: modelOverride } = params;
+  const resolvedModel = modelOverride ?? getGeminiModel();
 
   const startMs = Date.now();
 
@@ -85,7 +90,7 @@ export async function geminiGenerateImage(
 
   console.info(JSON.stringify({
     event: 'gemini_generate_start',
-    model: getGeminiModel(),
+    model: resolvedModel,
     promptLength: prompt.length,
     referenceCount: referenceImageBuffers?.length ?? 0,
   }));
@@ -125,7 +130,7 @@ export async function geminiGenerateImage(
     parts.push({ text: prompt });
 
     const response = await model.generateContent({
-      model: getGeminiModel(),
+      model: resolvedModel,
       config: {
         responseModalities: [Modality.TEXT, Modality.IMAGE],
         temperature,
@@ -204,7 +209,7 @@ export async function geminiGenerateImage(
         event: 'gemini_generate_retry_error',
         attempt,
         error: errStr.slice(0, 200),
-        model: getGeminiModel(),
+        model: resolvedModel,
       }));
     }
   }

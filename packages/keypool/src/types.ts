@@ -6,7 +6,7 @@
  * error-stringifies them; only the masked `hint` is safe to surface.
  */
 
-export type Provider = 'gemini' | 'fal' | 'groq' | 'sarvam';
+export type Provider = 'gemini' | 'fal' | 'groq' | 'sarvam' | 'openai';
 
 export type ReleaseOutcome =
   | { success: true }
