@@ -1,22 +1,54 @@
 /**
- * Never-fail pipeline — guarantees a result for every paying customer.
+ * Never-fail pipeline — 3-tier architecture with provider redundancy.
  *
- * Tier 1: V5 Creative (LightAnalyze + Gemini, 3 min budget) — best quality
- * Tier 2: Styled Studio (BiRefNet + sharp, 90s budget) — good quality
- * Tier 3: Clean Studio (pure sharp, 2s budget) — acceptable
- * Tier 4: Enhanced Original (pure sharp, 500ms) — always works
+ * Tier 1: gemini-3-pro-image-preview (Nano Banana Pro, $0.134/img)
+ *   V5 pipeline, 2 generation attempts + combinedQualityCheck gate.
  *
- * V4 types kept for backward compatibility with worker result shape.
+ * Tier 2: gemini-3.1-flash-image-preview (Nano Banana 2, $0.045/img, 5K/mo free)
+ *   Same V5 code path — different Gemini model. Fires when Tier 1 QA fails twice.
+ *
+ * Tier 3: OpenAI gpt-image-1 (medium quality, $0.034/img)
+ *   Different provider entirely — fires when both Gemini models fail / rate-limit.
+ *   Same QA gate applied to output.
+ *
+ * On all tiers failing:
+ *   Throws Error with `needs_refund: true` in the message. The worker detects
+ *   this marker and marks the order as failed so the founder can trigger a
+ *   manual refund. We do NOT ship a BiRefNet cutout, clean studio, or enhanced
+ *   original — quality below Tier 3 is unacceptable.
  */
 
 import { processProductImageV5, type ProcessImageV5Params } from './gemini-pipeline-v5.js';
+import { openaiGenerateImage } from './openai-generate.js';
+import { combinedQualityCheck } from '../qa/combined-qa.js';
 import type { ProcessImageParams, ProcessImageResult } from './orchestrator.js';
 import { downloadBuffer, uploadToStorage, postProcessFinal, addAILabel } from './fallback.js';
-import { createStyledStudioShot, createCleanStudioShot, createEnhancedOriginal } from './styled-studio.js';
+import { lightAnalyze, type LightAnalysis } from './light-analyzer.js';
+import { preprocessImage } from './preprocess.js';
 import type { ProductProfileV4 } from './product-analyzer-v4.js';
 
 // ---------------------------------------------------------------------------
-// Extended params for never-fail (V4 extras flow through)
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Primary model — Tier 1. Reads GEMINI_IMAGE_MODEL env at call time when absent. */
+const TIER1_MODEL = process.env['GEMINI_IMAGE_MODEL'] ?? 'gemini-3-pro-image-preview';
+
+/** Quality-fallback model — Tier 2. Always explicit — never reads env. */
+const TIER2_MODEL = 'gemini-3.1-flash-image-preview';
+
+/** Timeout for each Gemini V5 tier (3 minutes). */
+const GEMINI_TIER_TIMEOUT_MS = 3 * 60 * 1000;
+
+/** Timeout for the OpenAI Tier 3 path (90 seconds). */
+const OPENAI_TIER_TIMEOUT_MS = 90_000;
+
+/** QA pass threshold — mirrors V5 / V3 orchestrator. */
+const QA_PASS_SCORE = 65;
+const QA_FIDELITY_MIN = 25;
+
+// ---------------------------------------------------------------------------
+// Extended params
 // ---------------------------------------------------------------------------
 
 export interface NeverFailParams extends ProcessImageParams {
@@ -28,9 +60,9 @@ export interface NeverFailParams extends ProcessImageParams {
 
 export interface NeverFailResult {
   outputUrl: string;
-  /** Always undefined in V4 — video/story generation removed. Kept for worker compatibility. */
+  /** Always undefined — video generation removed. Kept for worker compatibility. */
   storyUrl?: string;
-  /** Always undefined in V4 — video/story generation removed. Kept for worker compatibility. */
+  /** Always undefined — video generation removed. Kept for worker compatibility. */
   videoUrl?: string;
   cutoutUrl?: string;
   qaScore: number;
@@ -39,13 +71,10 @@ export interface NeverFailResult {
   durationMs: number;
   tier: 1 | 2 | 3 | 4;
   tierReason?: string;
-  // Fields from ProcessImageResult
   outputBuffer?: Buffer;
   inputAssessment?: any;
   rejected?: boolean;
   rejectionReason?: string;
-  /** The creative direction actually used during Tier 1 (V4) generation.
-   *  Passed through from ProcessImageResult so the worker can cache it per-style. */
   usedCreativeDirection?: {
     heroMoment: string;
     creativeBrief: string;
@@ -57,14 +86,166 @@ export interface NeverFailResult {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms)
+    ),
+  ]);
+}
+
+/** Map ProcessImageResult -> NeverFailResult for Gemini tiers. */
+function geminiResultToNeverFail(
+  result: ProcessImageResult,
+  tier: 1 | 2,
+  totalStart: number,
+  tierReason?: string,
+): NeverFailResult {
+  return {
+    outputUrl: result.outputUrl,
+    outputBuffer: result.outputBuffer,
+    cutoutUrl: result.cutoutUrl,
+    qaScore: result.qaScore,
+    pipeline: result.pipeline,
+    attempts: result.attempts,
+    durationMs: Date.now() - totalStart,
+    tier,
+    tierReason,
+    inputAssessment: result.inputAssessment,
+    rejected: result.rejected,
+    rejectionReason: result.rejectionReason,
+    usedCreativeDirection: result.usedCreativeDirection,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tier 3 -- OpenAI minimal path
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal OpenAI generation path. Runs light-analyzer for prompt context,
+ * calls openaiGenerateImage, applies post-processing, then runs the same
+ * combinedQualityCheck gate as Tier 1 / Tier 2.
+ */
+async function runOpenAITier(
+  rawBuffer: Buffer,
+  params: NeverFailParams,
+  totalStart: number,
+): Promise<NeverFailResult> {
+  const style = params.style ?? 'style_lifestyle';
+  const category = params.productCategory ?? 'other';
+
+  console.info(JSON.stringify({ event: 'never_fail_tier3_start', provider: 'openai', model: 'gpt-image-1' }));
+
+  // Light analysis -- best-effort, non-fatal on failure
+  let analysis: LightAnalysis | null = null;
+  try {
+    const { buffer: processedBuffer } = await preprocessImage(rawBuffer);
+    analysis = await lightAnalyze([processedBuffer, ...(params.referenceImageBuffers ?? [])]);
+  } catch {
+    // Continue without analysis -- prompt will be generic but still usable
+  }
+
+  // Build a compact prompt from what we know
+  const productDesc = analysis
+    ? `${analysis.productName} (${analysis.productCategory}), dominant colors: ${analysis.dominantColors.join(', ')}`
+    : `product (${category})`;
+
+  const voiceNote = params.voiceInstructions
+    ? `\nAdditional instructions from client: ${params.voiceInstructions}`
+    : '';
+
+  const prompt = `Create a professional advertisement photo for: ${productDesc}. Style: ${style.replace('style_', '').replace(/_/g, ' ')}. Keep the product exactly as-is -- same shape, color, branding -- placed in a beautiful, realistic setting. No text overlays. Make it look like a real product photograph, not AI-generated.${voiceNote}`;
+
+  // Process raw buffer for sending to OpenAI
+  let processedBuffer: Buffer;
+  try {
+    const pp = await preprocessImage(rawBuffer);
+    processedBuffer = pp.buffer;
+  } catch {
+    processedBuffer = rawBuffer;
+  }
+
+  const result = await openaiGenerateImage({
+    inputImageBuffer: processedBuffer,
+    prompt,
+    referenceImageBuffers: params.referenceImageBuffers,
+  });
+
+  // Apply post-processing (grain, vignette, warmth, AI label)
+  let postProcessed: Buffer;
+  try {
+    postProcessed = await postProcessFinal(result.imageBuffer, style);
+    postProcessed = await addAILabel(postProcessed);
+  } catch {
+    postProcessed = result.imageBuffer;
+  }
+
+  // QA gate -- same thresholds as Tier 1 / Tier 2
+  const qa = await combinedQualityCheck(processedBuffer, postProcessed, {
+    checkFidelity: style !== 'style_with_model',
+  });
+
+  console.info(JSON.stringify({
+    event: 'never_fail_tier3_qa',
+    pass: qa.pass,
+    score: qa.score,
+    fidelityScore: qa.productFidelityScore,
+    hasFundamentalError: qa.hasFundamentalError,
+    issues: qa.issues,
+  }));
+
+  const fidelityOk = style === 'style_with_model' || qa.productFidelityScore >= QA_FIDELITY_MIN;
+  const passesGate =
+    qa.pass &&
+    qa.score >= QA_PASS_SCORE &&
+    fidelityOk &&
+    !qa.hasFundamentalError &&
+    qa.humanAnatomy !== 'major_issue' &&
+    qa.productIntegration !== 'impossible';
+
+  if (!passesGate) {
+    // Tier 3 QA failed -- signal needs_refund to the worker
+    throw new Error(
+      `[needs_refund: true] Tier 3 (OpenAI gpt-image-1) QA gate failed -- score=${qa.score} fidelity=${qa.productFidelityScore} fundamental=${qa.hasFundamentalError}. All 3 tiers exhausted.`,
+    );
+  }
+
+  const outputUrl = await uploadToStorage(postProcessed, `output_tier3_openai_${Date.now()}.jpg`);
+
+  console.info(JSON.stringify({
+    event: 'never_fail_tier3_success',
+    durationMs: Date.now() - totalStart,
+    qaScore: qa.score,
+  }));
+
+  return {
+    outputUrl,
+    outputBuffer: postProcessed,
+    qaScore: qa.score,
+    pipeline: 'openai-gpt-image',
+    attempts: 1,
+    durationMs: Date.now() - totalStart,
+    tier: 3,
+    tierReason: 'Both Gemini tiers failed -- OpenAI gpt-image-1 succeeded',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Main export
+// ---------------------------------------------------------------------------
+
 export async function processImageNeverFail(
   params: NeverFailParams,
 ): Promise<NeverFailResult> {
   const totalStart = Date.now();
-  const style = params.style ?? 'style_lifestyle';
-  const category = params.productCategory ?? 'other';
 
-  // Pre-download the raw image buffer once — reused across all tiers
+  // Pre-download the raw image buffer once -- reused across all tiers
   let rawBuffer: Buffer;
   try {
     rawBuffer = await downloadBuffer(params.imageUrl);
@@ -72,176 +253,112 @@ export async function processImageNeverFail(
     throw new Error(`Cannot download input image: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // ── Tier 1: V5 Creative Pipeline (3 min budget) ──────────────────
+  // -- Tier 1: gemini-3-pro-image-preview (primary / best quality) ----------
   {
-    console.info(JSON.stringify({ event: 'never_fail_tier1_start', pipeline: 'v5' }));
-
-    const TIER1_TIMEOUT = 3 * 60 * 1000;
-    let tier1Timer: ReturnType<typeof setTimeout> | undefined;
+    console.info(JSON.stringify({
+      event: 'never_fail_tier1_start',
+      pipeline: 'v5',
+      model: TIER1_MODEL,
+    }));
 
     try {
       const v5Params: ProcessImageV5Params = {
         ...params,
         referenceImageBuffers: params.referenceImageBuffers,
+        modelOverride: TIER1_MODEL,
       };
 
-      const result = await Promise.race([
+      const result = await withTimeout(
         processProductImageV5(v5Params),
-        new Promise<never>((_, reject) => {
-          tier1Timer = setTimeout(
-            () => reject(new Error('Tier 1 (V5 Creative) timed out after 3 minutes')),
-            TIER1_TIMEOUT,
-          );
-        }),
-      ]);
-
-      clearTimeout(tier1Timer!);
+        GEMINI_TIER_TIMEOUT_MS,
+        'Tier 1 (gemini-3-pro-image-preview)',
+      );
 
       console.info(JSON.stringify({
         event: 'never_fail_tier1_success',
         pipeline: 'v5',
+        model: TIER1_MODEL,
         qaScore: result.qaScore,
         durationMs: Date.now() - totalStart,
       }));
 
-      return {
-        outputUrl: result.outputUrl,
-        outputBuffer: result.outputBuffer,
-        cutoutUrl: result.cutoutUrl,
-        qaScore: result.qaScore,
-        pipeline: result.pipeline,
-        attempts: result.attempts,
-        durationMs: Date.now() - totalStart,
-        tier: 1,
-        inputAssessment: result.inputAssessment,
-        rejected: result.rejected,
-        rejectionReason: result.rejectionReason,
-        usedCreativeDirection: result.usedCreativeDirection,
-      };
+      return geminiResultToNeverFail(result, 1, totalStart);
     } catch (err) {
-      clearTimeout(tier1Timer!);
       const reason = err instanceof Error ? err.message : String(err);
       console.warn(JSON.stringify({
         event: 'never_fail_tier1_failed',
-        reason: reason.slice(0, 200),
+        model: TIER1_MODEL,
+        reason: reason.slice(0, 300),
         durationMs: Date.now() - totalStart,
       }));
     }
   }
 
-  // ── Tier 2: Styled Studio Shot (90s budget) ───────────────────────
+  // -- Tier 2: gemini-3.1-flash-image-preview (quality fallback, same code) -
   {
-    console.info(JSON.stringify({ event: 'never_fail_tier2_start' }));
-
-    const TIER2_TIMEOUT = 90_000;
-    let tier2Timer: ReturnType<typeof setTimeout> | undefined;
+    console.info(JSON.stringify({
+      event: 'never_fail_tier2_start',
+      pipeline: 'v5',
+      model: TIER2_MODEL,
+    }));
 
     try {
-      const styledBuffer = await Promise.race([
-        createStyledStudioShot(rawBuffer, params.imageUrl, style, category),
-        new Promise<never>((_, reject) => {
-          tier2Timer = setTimeout(
-            () => reject(new Error('Tier 2 (Styled Studio) timed out after 90s')),
-            TIER2_TIMEOUT,
-          );
-        }),
-      ]);
-
-      clearTimeout(tier2Timer!);
-
-      const outputUrl = await uploadToStorage(styledBuffer, `output_tier2_${Date.now()}.jpg`);
-
-      console.info(JSON.stringify({ event: 'never_fail_tier2_success', durationMs: Date.now() - totalStart }));
-      return {
-        outputUrl,
-        outputBuffer: styledBuffer,
-        qaScore: 50,
-        pipeline: 'styled-studio',
-        attempts: 0,
-        durationMs: Date.now() - totalStart,
-        tier: 2,
-        tierReason: 'V5 creative failed, styled studio succeeded',
+      const v5Params: ProcessImageV5Params = {
+        ...params,
+        referenceImageBuffers: params.referenceImageBuffers,
+        modelOverride: TIER2_MODEL,
       };
+
+      const result = await withTimeout(
+        processProductImageV5(v5Params),
+        GEMINI_TIER_TIMEOUT_MS,
+        'Tier 2 (gemini-3.1-flash-image-preview)',
+      );
+
+      console.info(JSON.stringify({
+        event: 'never_fail_tier2_success',
+        pipeline: 'v5',
+        model: TIER2_MODEL,
+        qaScore: result.qaScore,
+        durationMs: Date.now() - totalStart,
+      }));
+
+      return geminiResultToNeverFail(
+        result,
+        2,
+        totalStart,
+        'Tier 1 (Pro) failed -- Flash succeeded',
+      );
     } catch (err) {
-      clearTimeout(tier2Timer!);
       const reason = err instanceof Error ? err.message : String(err);
       console.warn(JSON.stringify({
         event: 'never_fail_tier2_failed',
-        reason: reason.slice(0, 200),
+        model: TIER2_MODEL,
+        reason: reason.slice(0, 300),
         durationMs: Date.now() - totalStart,
       }));
     }
   }
 
-  // ── Tier 3: Clean Studio Shot (2s budget, zero API calls) ─────────
+  // -- Tier 3: OpenAI gpt-image-1 (provider fallback) ----------------------
   try {
-    console.info(JSON.stringify({ event: 'never_fail_tier3_start' }));
-
-    const cleanBuffer = await createCleanStudioShot(rawBuffer, style);
-    const outputUrl = await uploadToStorage(cleanBuffer, `output_tier3_${Date.now()}.jpg`);
-
-    console.info(JSON.stringify({ event: 'never_fail_tier3_success', durationMs: Date.now() - totalStart }));
-    return {
-      outputUrl,
-      outputBuffer: cleanBuffer,
-      qaScore: 30,
-      pipeline: 'clean-studio',
-      attempts: 0,
-      durationMs: Date.now() - totalStart,
-      tier: 3,
-      tierReason: 'V5 creative + styled studio failed',
-    };
+    const tier3Result = await withTimeout(
+      runOpenAITier(rawBuffer, params, totalStart),
+      OPENAI_TIER_TIMEOUT_MS,
+      'Tier 3 (OpenAI gpt-image-1)',
+    );
+    return tier3Result;
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    console.warn(JSON.stringify({
-      event: 'never_fail_tier3_failed',
-      reason: reason.slice(0, 200),
-      durationMs: Date.now() - totalStart,
-    }));
-  }
-
-  // ── Tier 4: Enhanced Original (always works) ──────────────────────
-  console.info(JSON.stringify({ event: 'never_fail_tier4_start' }));
-
-  try {
-    const enhancedBuffer = await createEnhancedOriginal(rawBuffer, style);
-    const outputUrl = await uploadToStorage(enhancedBuffer, `output_tier4_${Date.now()}.jpg`);
-
-    console.info(JSON.stringify({ event: 'never_fail_tier4_success', durationMs: Date.now() - totalStart }));
-    return {
-      outputUrl,
-      outputBuffer: enhancedBuffer,
-      qaScore: 10,
-      pipeline: 'enhanced-original',
-      attempts: 0,
-      durationMs: Date.now() - totalStart,
-      tier: 4,
-      tierReason: 'All processing tiers failed — delivering enhanced original',
-    };
-  } catch (tier4Err) {
     console.error(JSON.stringify({
-      event: 'tier4_failed',
-      error: tier4Err instanceof Error ? tier4Err.message : String(tier4Err),
+      event: 'never_fail_tier3_failed',
+      provider: 'openai',
+      reason: reason.slice(0, 300),
       durationMs: Date.now() - totalStart,
     }));
-
-    // Absolute last resort: upload raw input buffer as-is
-    try {
-      const outputUrl = await uploadToStorage(rawBuffer, `output_raw_${Date.now()}.jpg`);
-      console.info(JSON.stringify({ event: 'never_fail_raw_upload_success', durationMs: Date.now() - totalStart }));
-      return {
-        outputUrl,
-        qaScore: 5,
-        pipeline: 'raw-input',
-        attempts: 0,
-        durationMs: Date.now() - totalStart,
-        tier: 4,
-        tierReason: 'All processing tiers including enhanced-original failed — delivering raw input',
-      };
-    } catch (rawErr) {
-      throw new Error(
-        `All pipeline tiers including raw upload failed: ${rawErr instanceof Error ? rawErr.message : String(rawErr)}`,
-      );
-    }
+    // Propagate with needs_refund marker
+    throw new Error(
+      `[needs_refund: true] All 3 AI tiers exhausted (Pro -> Flash -> OpenAI). Last error: ${reason.slice(0, 200)}`,
+    );
   }
 }

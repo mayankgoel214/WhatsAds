@@ -28,7 +28,7 @@ export function setKeyPoolEventSink(sink: (event: KeyPoolEvent) => void): void {
 }
 
 function buildRegistry(extraConfig?: KeyPoolConfig): Map<Provider, KeyPool> {
-  const providers: Provider[] = ['gemini', 'fal', 'groq', 'sarvam'];
+  const providers: Provider[] = ['gemini', 'fal', 'groq', 'sarvam', 'openai'];
   const map = new Map<Provider, KeyPool>();
   const onEvent = eventSink ?? defaultEventSink;
 
@@ -71,8 +71,9 @@ export function allHealth(): Record<Provider, ProviderHealth | null> {
     fal: null,
     groq: null,
     sarvam: null,
+    openai: null,
   };
-  for (const provider of ['gemini', 'fal', 'groq', 'sarvam'] as Provider[]) {
+  for (const provider of ['gemini', 'fal', 'groq', 'sarvam', 'openai'] as Provider[]) {
     const pool = registry.get(provider);
     out[provider] = pool ? pool.health() : null;
   }

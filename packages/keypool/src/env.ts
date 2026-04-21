@@ -36,6 +36,10 @@ const PROVIDER_ENV: Record<Provider, ProviderEnvSpec> = {
     plural: 'SARVAM_API_KEYS',
     singular: 'SARVAM_API_KEY',
   },
+  openai: {
+    plural: 'OPENAI_API_KEYS',
+    singular: 'OPENAI_API_KEY',
+  },
 };
 
 export function readKeysFromEnv(provider: Provider, env: NodeJS.ProcessEnv = process.env): string[] {
