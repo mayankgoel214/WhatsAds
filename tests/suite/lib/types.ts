@@ -8,6 +8,13 @@ export interface Product {
   styleTriplets: string[][];           // each inner array is exactly 3 style IDs sent per API call
   instructions: InstructionCase[];     // instruction variants to test
   notes?: string;                      // human notes about this product
+
+  // Video beta additions (all optional — default: image mode)
+  mediaType?: 'image' | 'video';       // default 'image'; set 'video' to run Seedance 2.0 tests
+  videoStyles?: string[];              // video_cinematic | video_ugc | video_demo (one run per style)
+  voiceoverText?: string;              // for video_ugc style; auto-generated if omitted
+  videoDuration?: number;              // seconds (1–10, default 5)
+  videoAspectRatio?: '1:1' | '9:16' | '16:9'; // default '9:16'
 }
 
 export interface InstructionCase {
@@ -41,7 +48,10 @@ export interface TestResult {
   runNumber: number;
   timestamp: string;                   // ISO 8601
 
-  // Pipeline output
+  // Media type ('image' or 'video') — default 'image' for backwards compat
+  mediaType?: 'image' | 'video';
+
+  // Pipeline output (image mode)
   qaScore: number | null;
   tier: number | null;
   pipeline: string | null;
@@ -51,7 +61,7 @@ export interface TestResult {
   outputLocalPath: string | null;
   outputUrl: string | null;
 
-  // Prompt sent to Gemini
+  // Prompt sent to Gemini / Seedance
   prompt: string | null;
 
   // Analysis from lightAnalyze
@@ -60,6 +70,14 @@ export interface TestResult {
   // Error (if test failed)
   error: string | null;
   errorAttempts: number;               // number of times we retried
+
+  // Video-specific fields (populated when mediaType === 'video')
+  videoUrl?: string | null;
+  videoLocalPath?: string | null;      // local .mp4 path relative to runDir
+  videoModelId?: string | null;        // fal.ai model ID used
+  videoAspectRatio?: string | null;
+  videoDurationSec?: number | null;
+  voiceoverText?: string | null;
 }
 
 export interface AnalysisResult {

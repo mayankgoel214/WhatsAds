@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { Manifest, Product, TestCombination, TestResult, GradeEntry } from './lib/types.js';
-import { generateViaAdminApi } from './lib/admin-client.js';
+import { generateViaAdminApi, generateVideoViaAdminApi } from './lib/admin-client.js';
 import { RunLogger } from './lib/logger.js';
 import { parallelExecute } from './lib/concurrency.js';
 
@@ -60,23 +60,46 @@ function buildCombinations(
     // Product filter
     if (opts.product && product.slug !== opts.product) continue;
 
-    for (const triplet of product.styleTriplets) {
-      if (triplet.length !== 3) {
-        console.warn(`[WARN] Product "${product.slug}" has a triplet with ${triplet.length} styles (expected 3). Skipping.`);
-        continue;
+    const mediaType = product.mediaType ?? 'image';
+
+    if (mediaType === 'video') {
+      // Video products: one combination per videoStyle × instructionCase × run
+      const videoStyles = product.videoStyles ?? ['video_cinematic'];
+      for (const videoStyle of videoStyles) {
+        if (opts.style && videoStyle !== opts.style) continue;
+        for (const instructionCase of product.instructions) {
+          for (let run = 1; run <= runsPerCombo; run++) {
+            combos.push({
+              productSlug: product.slug,
+              // Encode as a single-element "triplet" for compatibility with
+              // the existing loop structure; runSingleTest detects mediaType
+              stylesTriplet: [videoStyle],
+              instructionCase,
+              runNumber: run,
+            });
+          }
+        }
       }
+    } else {
+      // Image products (existing behaviour)
+      for (const triplet of product.styleTriplets) {
+        if (triplet.length !== 3) {
+          console.warn(`[WARN] Product "${product.slug}" has a triplet with ${triplet.length} styles (expected 3). Skipping.`);
+          continue;
+        }
 
-      // Style filter — include triplet only if it contains the requested style
-      if (opts.style && !triplet.includes(opts.style)) continue;
+        // Style filter — include triplet only if it contains the requested style
+        if (opts.style && !triplet.includes(opts.style)) continue;
 
-      for (const instructionCase of product.instructions) {
-        for (let run = 1; run <= runsPerCombo; run++) {
-          combos.push({
-            productSlug: product.slug,
-            stylesTriplet: triplet,
-            instructionCase,
-            runNumber: run,
-          });
+        for (const instructionCase of product.instructions) {
+          for (let run = 1; run <= runsPerCombo; run++) {
+            combos.push({
+              productSlug: product.slug,
+              stylesTriplet: triplet,
+              instructionCase,
+              runNumber: run,
+            });
+          }
         }
       }
     }
@@ -90,8 +113,10 @@ function buildCombinations(
 
 const RESULTS_CSV_HEADERS = [
   'product', 'style', 'instructionCase', 'runNumber', 'timestamp',
+  'mediaType',
   'qaScore', 'tier', 'pipeline', 'durationMs',
   'outputLocalPath', 'outputUrl',
+  'videoUrl', 'videoLocalPath', 'videoModelId', 'videoAspectRatio', 'videoDurationSec', 'voiceoverText',
   'productName', 'productCategory', 'itemCount', 'setDescription', 'analyzerFellBack',
   'error', 'errorAttempts',
 ].join(',');
@@ -119,12 +144,19 @@ function resultsToCsvRow(r: TestResult): string {
     r.instructionCase,
     r.runNumber,
     r.timestamp,
+    r.mediaType ?? 'image',
     r.qaScore,
     r.tier,
     r.pipeline,
     r.durationMs,
     r.outputLocalPath,
     r.outputUrl,
+    r.videoUrl ?? '',
+    r.videoLocalPath ?? '',
+    r.videoModelId ?? '',
+    r.videoAspectRatio ?? '',
+    r.videoDurationSec ?? '',
+    r.voiceoverText ?? '',
     r.analysis?.productName ?? '',
     r.analysis?.productCategory ?? '',
     r.analysis?.itemCount ?? '',
@@ -154,16 +186,19 @@ function gradeTemplateCsvRow(r: TestResult): string {
 }
 
 // ---------------------------------------------------------------------------
-// Image downloader
+// File downloader (images and videos)
 // ---------------------------------------------------------------------------
 
-async function downloadImage(url: string, destPath: string): Promise<void> {
+async function downloadToFile(url: string, destPath: string): Promise<void> {
   const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`Failed to download image: ${resp.status} ${url}`);
-  if (!resp.body) throw new Error('No response body for image download');
+  if (!resp.ok) throw new Error(`Failed to download file: ${resp.status} ${url}`);
+  if (!resp.body) throw new Error('No response body for file download');
   const writer = createWriteStream(destPath);
   await pipeline(Readable.fromWeb(resp.body as Parameters<typeof Readable.fromWeb>[0]), writer);
 }
+
+// Keep old name as alias for backwards compat within this file
+const downloadImage = downloadToFile;
 
 // ---------------------------------------------------------------------------
 // Single test executor
@@ -181,6 +216,8 @@ async function runSingleTest(params: {
   const { combo, product, manifest, runDir, outputsDir, logger, retries } = params;
   const { config } = manifest;
 
+  const mediaType = product.mediaType ?? 'image';
+
   const photoPaths = product.photos.map(
     f => resolve(__dirname, product.photoDir, f),
   );
@@ -193,12 +230,87 @@ async function runSingleTest(params: {
     try {
       await logger.info('test_attempt_start', {
         product: combo.productSlug,
+        mediaType,
         styles: combo.stylesTriplet,
         instructionCase: combo.instructionCase.case,
         runNumber: combo.runNumber,
         attempt: attempts,
       });
 
+      // ── VIDEO PATH ──────────────────────────────────────────────────────
+      if (mediaType === 'video') {
+        const videoStyle = combo.stylesTriplet[0]!;
+        const apiResult = await generateVideoViaAdminApi({
+          adminUrl: config.adminUrl,
+          adminKey: config.adminKey,
+          photoPaths,
+          videoStyle,
+          videoDuration: product.videoDuration ?? 5,
+          aspectRatio: product.videoAspectRatio ?? '9:16',
+          voiceoverText: product.voiceoverText,
+          instructions: combo.instructionCase.text,
+          timeoutMs: 300_000, // 5 min
+        });
+
+        const timestamp = new Date().toISOString();
+        const safeStyle = videoStyle.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const safeInstr = combo.instructionCase.case.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const videoFilename = `${combo.productSlug}_${safeStyle}_${safeInstr}_run${combo.runNumber}.mp4`;
+        const destPath = join(outputsDir, videoFilename);
+
+        let videoLocalPath: string | null = null;
+        if (apiResult.video.videoUrl && !apiResult.video.error) {
+          try {
+            await downloadToFile(apiResult.video.videoUrl, destPath);
+            videoLocalPath = join('outputs', videoFilename);
+          } catch (dlErr) {
+            await logger.warn('video_download_failed', {
+              style: videoStyle,
+              url: apiResult.video.videoUrl,
+              error: dlErr instanceof Error ? dlErr.message : String(dlErr),
+            });
+          }
+        }
+
+        const result: TestResult = {
+          product: combo.productSlug,
+          style: videoStyle,
+          instructionCase: combo.instructionCase.case,
+          runNumber: combo.runNumber,
+          timestamp,
+          mediaType: 'video',
+          // Image fields unused for video
+          qaScore: null,
+          tier: null,
+          pipeline: null,
+          durationMs: apiResult.video.durationMs ?? null,
+          outputLocalPath: null,
+          outputUrl: null,
+          prompt: apiResult.video.prompt ?? null,
+          analysis: apiResult.analysis ?? null,
+          error: apiResult.video.error ?? null,
+          errorAttempts: attempt,
+          // Video-specific
+          videoUrl: apiResult.video.videoUrl ?? null,
+          videoLocalPath,
+          videoModelId: apiResult.video.modelId ?? null,
+          videoAspectRatio: apiResult.video.aspectRatio ?? null,
+          videoDurationSec: apiResult.video.durationSec ?? null,
+          voiceoverText: apiResult.video.voiceoverText ?? null,
+        };
+
+        await logger.info('test_video_done', {
+          product: combo.productSlug,
+          style: videoStyle,
+          videoUrl: result.videoUrl,
+          durationMs: result.durationMs,
+          error: result.error,
+        });
+
+        return [result];
+      }
+
+      // ── IMAGE PATH (existing) ───────────────────────────────────────────
       const apiResult = await generateViaAdminApi({
         adminUrl: config.adminUrl,
         adminKey: config.adminKey,
@@ -237,6 +349,7 @@ async function runSingleTest(params: {
           instructionCase: combo.instructionCase.case,
           runNumber: combo.runNumber,
           timestamp,
+          mediaType: 'image',
           qaScore: styleResult.qaScore ?? null,
           tier: styleResult.tier ?? null,
           pipeline: styleResult.pipeline ?? null,
@@ -266,6 +379,7 @@ async function runSingleTest(params: {
       lastError = err instanceof Error ? err.message : String(err);
       await logger.warn('test_attempt_failed', {
         product: combo.productSlug,
+        mediaType,
         styles: combo.stylesTriplet,
         attempt: attempts,
         error: lastError,
@@ -286,6 +400,7 @@ async function runSingleTest(params: {
     instructionCase: combo.instructionCase.case,
     runNumber: combo.runNumber,
     timestamp,
+    mediaType,
     qaScore: null,
     tier: null,
     pipeline: null,
