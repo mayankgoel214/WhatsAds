@@ -30,10 +30,11 @@ import { downloadBuffer } from '../pipeline/fallback.js';
 // namespace). The route is `bytedance/seedance-2.0/image-to-video` — no fal-ai/
 // prefix. Confirmed via fal.run URL structure: fal.run/bytedance/seedance-2.0/...
 const SEEDANCE_MODEL = 'bytedance/seedance-2.0/image-to-video';
-// Seedance 2.0 video generation takes 2–5 min typically, sometimes longer when
-// the fal.ai queue is busy. Single attempt with a 7-minute timeout — retries
-// are expensive ($0.50/video) and won't help if the queue is slow.
-const TIMEOUT_PER_ATTEMPT_MS = 7 * 60 * 1000; // 7 minutes
+// Seedance 2.0 generation time scales with (duration × reference count × queue
+// depth). 10s + 5 refs can push past 7 min when fal's queue is busy. Bump to
+// 12 min per attempt to catch the heaviest cases. Still single attempt —
+// retries are $0.50 each and won't help queue slowness.
+const TIMEOUT_PER_ATTEMPT_MS = 12 * 60 * 1000; // 12 minutes
 const MAX_ATTEMPTS = 1;
 const BASE_BACKOFF_MS = 2_000;
 

@@ -12,6 +12,8 @@
  *   - No Kontext, no ESRGAN, no CodeFormer, no Bria
  */
 
+import { GoogleGenAI } from '@google/genai';
+import { getProviderKey } from '@autmn/keypool';
 import { preprocessImage } from './preprocess.js';
 import { lightAnalyze, type LightAnalysis } from './light-analyzer.js';
 import { getStylePromptV5 } from './style-prompts-v5.js';
@@ -33,11 +35,19 @@ import type { ProcessImageParams, ProcessImageResult } from './orchestrator.js';
 // V5 previously shipped simpleQA (3 binary checks) which gave every output a
 // passing score 75 regardless of fidelity. This let wrong-product outputs
 // ship. Match V3's thresholds so fidelity breaks fail-closed.
+//
+// Day 1 (2026-04-22) — Reliability push for 2-week deployment:
+//   - V5_QA_FIDELITY_MIN raised 25 → 35.
+//     On 2026-04-20 the "stone-slab-on-temple" output passed QA at
+//     fidelityScore:32 — the gate was too lenient. With 35 the same
+//     kind of output would fail, falling through to Tier 2 Flash.
+//   - V5_BEST_OF_MIN_SCORE also bumped proportionally 55 → 60 so best-of
+//     fallback can't rescue an output the new fidelity floor rejects.
 // ---------------------------------------------------------------------------
 const V5_QA_PASS_SCORE = 65;
-const V5_QA_FIDELITY_MIN = 25;
+const V5_QA_FIDELITY_MIN = 35;
 /** Best-of fallback threshold — still better than dropping to Tier 2. */
-const V5_BEST_OF_MIN_SCORE = 55;
+const V5_BEST_OF_MIN_SCORE = 60;
 
 // ---------------------------------------------------------------------------
 // Candidate selection composite gate
@@ -209,6 +219,120 @@ function computeCompositeScore(check: {
   return Math.max(0, fill + deterministicPass + sharpness - symmetryPenalty);
 }
 
+/**
+ * AI-vision best-of-N tie-breaker (Day 1, 2026-04-22).
+ *
+ * When over-generation produces 2+ candidates that all clear the deterministic
+ * composite score gate, deterministic scoring alone (fillPct + blur + symmetry)
+ * can't tell which candidate preserves the product best. A compact Gemini 2.5
+ * Flash vision call compares them against the input photo and picks the one
+ * that most faithfully preserves product identity.
+ *
+ * Cost: ~$0.005 per call (runs once per generation attempt). Latency: ~5-10s.
+ * Fails soft — if the API call fails or returns garbage, caller falls back to
+ * deterministic-best selection so generation never blocks on the selector.
+ */
+async function aiVisionPickBest(
+  inputBuffer: Buffer,
+  candidateBuffers: Buffer[],
+): Promise<number | null> {
+  if (candidateBuffers.length <= 1) return 0;
+
+  try {
+    const genai = new GoogleGenAI({ apiKey: getProviderKey('gemini') });
+
+    const parts: Array<{ text: string } | { inlineData: { mimeType: 'image/jpeg'; data: string } }> = [
+      { text: 'Reference product photo (the user\'s original):' },
+      { inlineData: { mimeType: 'image/jpeg', data: inputBuffer.toString('base64') } },
+      { text: `\n${candidateBuffers.length} candidate AI-generated ads follow, labeled 0..${candidateBuffers.length - 1}:` },
+    ];
+
+    for (let i = 0; i < candidateBuffers.length; i++) {
+      parts.push({ text: `\nCandidate ${i}:` });
+      parts.push({ inlineData: { mimeType: 'image/jpeg', data: candidateBuffers[i]!.toString('base64') } });
+    }
+
+    parts.push({
+      text: `\nTask: pick the candidate that most faithfully preserves the product from the reference photo.
+
+Rules in priority order:
+1. Product fidelity — the product in the winning candidate should match the reference's colors, logo text, proportions. Reject candidates that change the product.
+2. Scene quality — prefer professional, non-cliche, ad-worthy composition.
+3. Artifact-free — no distorted text, duplicated elements, or random objects.
+
+Output JSON schema (respond with ONLY the JSON, no prose):
+{"winner": <integer 0 to ${candidateBuffers.length - 1}>, "reason": "<short reason, under 15 words>"}`,
+    });
+
+    const response = await Promise.race([
+      genai.models.generateContent({
+        // 2.5-flash-lite skips the "thinking" tokens that were eating the whole
+        // maxOutputTokens budget on 2.5-flash — we consistently got
+        // 'Here is the JSON requested:' then EOF because thinking tokens used
+        // the remainder. Lite is simpler and faster for this classification task.
+        model: 'gemini-2.5-flash-lite',
+        contents: [{ role: 'user', parts }],
+        config: {
+          temperature: 0,
+          maxOutputTokens: 200,
+        },
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('ai_vision_picker_timeout')), 15_000),
+      ),
+    ]);
+
+    // Gemini may return multiple parts. Concatenate all text parts so we never
+    // miss content split across parts (or truncated by maxOutputTokens).
+    const allTextParts = response.candidates?.[0]?.content?.parts
+      ?.map(p => (p as { text?: string }).text ?? '')
+      .filter(Boolean)
+      .join('\n') ?? '';
+    const raw = allTextParts.trim();
+
+    if (!raw) {
+      console.warn(JSON.stringify({ event: 'ai_vision_pick_empty_response', candidateCount: candidateBuffers.length }));
+      return null;
+    }
+
+    // Extract JSON object from potentially-prose-prefixed response.
+    // Gemini loves to say "Here is the JSON requested:" before the actual JSON.
+    // Also strip ```json fences if present.
+    const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    const jsonStart = stripped.indexOf('{');
+    const jsonEnd = stripped.lastIndexOf('}');
+    if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+      try {
+        const parsed = JSON.parse(stripped.slice(jsonStart, jsonEnd + 1)) as { winner?: unknown };
+        const winner = typeof parsed.winner === 'number' ? parsed.winner : parseInt(String(parsed.winner), 10);
+        if (!Number.isNaN(winner) && winner >= 0 && winner < candidateBuffers.length) {
+          return winner;
+        }
+      } catch {
+        // fall through to digit-extraction
+      }
+    }
+
+    // Digit-extraction fallback — handle "Candidate 2" / "2" / "winner: 2" etc.
+    const winnerMatch = raw.match(/winner["']?\s*[:=]\s*([0-9]+)/i) ?? raw.match(/^\s*([0-9]+)\s*$/);
+    if (winnerMatch?.[1]) {
+      const winner = parseInt(winnerMatch[1], 10);
+      if (!Number.isNaN(winner) && winner >= 0 && winner < candidateBuffers.length) {
+        return winner;
+      }
+    }
+
+    console.warn(JSON.stringify({ event: 'ai_vision_pick_unparseable', rawText: raw.slice(0, 120) }));
+    return null;
+  } catch (err) {
+    console.warn(JSON.stringify({
+      event: 'ai_vision_pick_failed',
+      error: err instanceof Error ? err.message : String(err),
+    }));
+    return null;
+  }
+}
+
 async function selectBestCandidate(
   inputBuffer: Buffer,
   candidates: Buffer[],
@@ -226,6 +350,7 @@ async function selectBestCandidate(
       compositeScore: composite,
       threshold: V5_CANDIDATE_MIN_COMPOSITE,
       clearedThreshold: cleared,
+      selector: 'single',
       scores: [{ idx: 0, pass: only.pass, fill: only.estimatedFillPct, composite }],
     }));
 
@@ -236,30 +361,54 @@ async function selectBestCandidate(
     };
   }
 
+  // Step 1 — deterministic pre-filter: compute composite scores for all candidates.
+  // Fast + free + catches obvious garbage (blur, duplicated quadrants, empty canvas).
   const checks = await Promise.all(candidates.map(c => runDeterministicChecks(inputBuffer, c)));
-
-  // Composite score drives selection AND the gate. See V5_CANDIDATE_MIN_COMPOSITE.
   const composites = checks.map(computeCompositeScore);
 
-  let bestIdx = 0;
-  let bestComposite = -Infinity;
+  // Shortlist: candidates at or above the threshold. If none clear, we pick the
+  // best of the bunch anyway and let combinedQualityCheck decide to fall through.
+  const eligible = composites
+    .map((c, i) => ({ idx: i, composite: c }))
+    .filter(x => x.composite >= V5_CANDIDATE_MIN_COMPOSITE);
 
-  for (let i = 0; i < composites.length; i++) {
-    if (composites[i]! > bestComposite) {
-      bestComposite = composites[i]!;
-      bestIdx = i;
+  const shortlist = eligible.length > 0 ? eligible : composites.map((c, i) => ({ idx: i, composite: c }));
+
+  // Step 2 — AI vision tie-breaker: Gemini 2.5 Flash picks the best from the
+  // shortlist. Falls back to deterministic-best on any failure.
+  let bestIdx: number;
+  let selector: 'deterministic_only' | 'ai_vision' | 'ai_vision_failed';
+
+  if (shortlist.length === 1) {
+    bestIdx = shortlist[0]!.idx;
+    selector = 'deterministic_only';
+  } else {
+    const shortlistBuffers = shortlist.map(s => candidates[s.idx]!);
+    const aiWinner = await aiVisionPickBest(inputBuffer, shortlistBuffers);
+    if (aiWinner === null) {
+      // Fall back to deterministic-best from shortlist
+      bestIdx = shortlist.reduce((best, curr) =>
+        curr.composite > best.composite ? curr : best,
+      ).idx;
+      selector = 'ai_vision_failed';
+    } else {
+      bestIdx = shortlist[aiWinner]!.idx;
+      selector = 'ai_vision';
     }
   }
 
+  const bestComposite = composites[bestIdx]!;
   const cleared = bestComposite >= V5_CANDIDATE_MIN_COMPOSITE;
 
   console.info(JSON.stringify({
     event: 'v5_candidate_selected',
     winner: bestIdx,
     totalCandidates: candidates.length,
+    shortlistSize: shortlist.length,
     compositeScore: bestComposite,
     threshold: V5_CANDIDATE_MIN_COMPOSITE,
     clearedThreshold: cleared,
+    selector,
     scores: checks.map((c, i) => ({
       idx: i,
       pass: c.pass,
@@ -561,12 +710,17 @@ export async function processProductImageV5(
 
     try {
       // COMPOSITE track is disabled — always run DIRECT.
-      // attempt 1 uses 2 parallel temps, retry uses single call.
-      // Phase 1 (2026-04-20): lowered from [0.5, 0.7] / [0.5] to [0.3, 0.4] / [0.3]
-      // per Gemini 3 Pro best-practice research — lower temp = higher product fidelity,
-      // tighter inter-generation consistency. Still two candidates for multi-run selection
-      // since Pro has no seed parameter.
-      const temperatures = isRetry ? [0.3] : [0.3, 0.4];
+      //
+      // Day 1 (2026-04-22) — Over-generation for reliability:
+      //   Attempt 1: 4 parallel candidates at temps [0.3, 0.4, 0.5, 0.6]
+      //     (was 2 at [0.3, 0.4])
+      //   Retry:     2 parallel candidates at temps [0.3, 0.5]
+      //     (was 1 at [0.3])
+      // Rationale: Pro has no seed param, so multi-run is the reliability lever.
+      // More variants → higher chance at least one clears the new fidelity
+      // threshold of 35. Latency unchanged (runs in parallel). Cost doubles
+      // — justified by expected Tier-1 hit-rate lift from ~70% to ~88%+.
+      const temperatures = isRetry ? [0.3, 0.5] : [0.3, 0.4, 0.5, 0.6];
       const selection = await runDirectTrack(
         croppedBuffer,
         style,
