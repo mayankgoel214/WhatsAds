@@ -36,6 +36,39 @@
         { "case": "no-instruction", "text": null }
       ],
       "notes": "3 photos are different jewelry pieces (not multi-angle of same product) — known to cause analyzer fallback"
+    },
+    {
+      "slug": "diet-coke-video",
+      "name": "Diet Coke can (video beta)",
+      "category": "food",
+      "expectedItemCount": 1,
+      "mediaType": "video",
+      "photoDir": "products/diet-coke",
+      "photos": ["1.jpg", "2.jpg"],
+      "videoStyles": ["video_cinematic", "video_demo"],
+      "videoDuration": 5,
+      "videoAspectRatio": "9:16",
+      "instructions": [
+        { "case": "no-instruction", "text": null }
+      ],
+      "notes": "Seedance 2.0 video beta — cinematic dolly + product demo styles. Reuses diet-coke photos. Run with --product=diet-coke-video"
+    },
+    {
+      "slug": "diet-coke-ugc",
+      "name": "Diet Coke can (UGC voiceover beta)",
+      "category": "food",
+      "expectedItemCount": 1,
+      "mediaType": "video",
+      "photoDir": "products/diet-coke",
+      "photos": ["1.jpg"],
+      "videoStyles": ["video_ugc"],
+      "voiceoverText": "Yaar ye Diet Coke try karo, genuinely kaafi refreshing hai!",
+      "videoDuration": 5,
+      "videoAspectRatio": "9:16",
+      "instructions": [
+        { "case": "no-instruction", "text": null }
+      ],
+      "notes": "UGC avatar lip-sync test. voiceoverText overrides auto-generated default."
     }
   ]
 }
