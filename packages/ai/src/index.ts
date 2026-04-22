@@ -205,6 +205,21 @@ export {
   type MultiShotVideoResult,
 } from './video/multi-shot-video.js';
 
+// Seedance 2.0 — beta video ad generation (admin-only for now)
+export {
+  generateProductVideo,
+  type SeedanceVideoParams,
+  type SeedanceVideoResult,
+} from './video/seedance.js';
+
+export {
+  getVideoPrompt,
+  VIDEO_STYLES,
+  type VideoStyle,
+  type VideoPromptParams,
+  type VideoPromptResult,
+} from './video/video-style-prompts.js';
+
 // Remaining video exports kept but not actively used — commenting out for now
 // to reduce surface area while image quality work continues.
 // export { generateKenBurnsVideo } from './video/ken-burns.js';
