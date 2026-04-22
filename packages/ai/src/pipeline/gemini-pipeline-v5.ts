@@ -17,6 +17,7 @@ import { getProviderKey } from '@autmn/keypool';
 import { preprocessImage } from './preprocess.js';
 import { lightAnalyze, type LightAnalysis } from './light-analyzer.js';
 import { getStylePromptV5 } from './style-prompts-v5.js';
+import { generateCreativeBrief } from './art-director.js';
 import { geminiGenerateImage } from './gemini-generate.js';
 import { compositeProductOntoBackground } from './composite-engine.js';
 import {
@@ -512,7 +513,31 @@ async function runDirectTrack(
   temperatures: number[],
   modelOverride?: string,
 ): Promise<CandidateSelection> {
-  const prompt = getStylePromptV5(style, 'DIRECT', analysis, voiceInstructions);
+  // Day 2 (2026-04-23): Art Director LLM writes a custom creative brief for
+  // THIS product × style before generation. Replaces the static SCHEMA scene
+  // description when it succeeds. Falls back to static on any failure — the
+  // pipeline never blocks on AD unavailability.
+  const adResult = await generateCreativeBrief({
+    style,
+    analysis,
+    userInstructions: voiceInstructions,
+  });
+
+  const prompt = getStylePromptV5(
+    style,
+    'DIRECT',
+    analysis,
+    voiceInstructions,
+    adResult.brief ?? undefined,
+  );
+
+  console.info(JSON.stringify({
+    event: 'v5_prompt_built',
+    style,
+    usedArtDirector: adResult.brief !== null,
+    artDirectorSource: adResult.source,
+    promptLength: prompt.length,
+  }));
 
   if (temperatures.length === 1) {
     const result = await geminiGenerateImage({
