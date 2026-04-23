@@ -75,14 +75,26 @@ function getStyleDisplayName(style: string): string {
 
 /**
  * Generate the prompt sent to Gemini for image generation.
+ *
+ * Day 2 (2026-04-23): Optional `artDirectorBrief` parameter. When provided,
+ * the brief replaces the static SCHEMA scene description for this order —
+ * each product gets its own custom creative direction instead of the same
+ * template every time. Preservation anchors + displayHint + aspect ratio
+ * stay unchanged regardless. Caller (gemini-pipeline-v5) passes the brief
+ * when Art Director succeeded, or omits it when AD failed (fallback to
+ * static SCHEMA template = current behavior).
  */
 export function getStylePromptV5(
   style: string,
   _track: 'COMPOSITE' | 'DIRECT',
   analysis: LightAnalysis,
   userInstructions?: string,
+  artDirectorBrief?: string,
 ): string {
-  const scene = getSceneDescription(style, analysis);
+  // Use Art Director brief when provided; fall back to static SCHEMA scene.
+  const scene = artDirectorBrief?.trim()
+    ? artDirectorBrief.trim()
+    : getSceneDescription(style, analysis);
 
   // Display-method hint — applies to all styles EXCEPT style_with_model.
   // In with_model, the model's body IS the display, so this would conflict.
