@@ -22,6 +22,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { getProviderKey } from '@autmn/keypool';
 import type { LightAnalysis } from './light-analyzer.js';
+import { pickCompositionSeed } from './composition-library.js';
 
 // gemini-2.5-flash has "thinking" tokens that silently eat the maxOutputTokens
 // budget, truncating the visible JSON output. gemini-2.5-flash-lite skips
@@ -105,6 +106,12 @@ export async function generateCreativeBrief(
       ? `${analysis.setDescription ?? `${analysis.items.length}-piece set`} consisting of ${analysis.items.join(', ')}`
       : analysis.productName;
 
+  // Phase A (2026-04-22): seed the AD with a random composition from the
+  // library. This forces variety across runs — AD riffs on the seed instead
+  // of converging on the same "polished marble, warm amber" default every
+  // time for Dark Luxury, etc.
+  const compositionSeed = pickCompositionSeed(style);
+
   const prompt = buildArtDirectorPrompt({
     productDescriptor,
     category: analysis.productCategory,
@@ -114,6 +121,7 @@ export async function generateCreativeBrief(
     styleName,
     stylePhilosophy,
     isWildCard: style === 'style_autmn_special',
+    compositionSeed,
     userInstructions,
   });
 
@@ -157,6 +165,7 @@ export async function generateCreativeBrief(
               style,
               productName: analysis.productName,
               briefLength: brief.length,
+              compositionSeedUsed: !!compositionSeed,
               durationMs: Date.now() - startMs,
             }));
             return { brief, source: 'llm', durationMs: Date.now() - startMs };
@@ -212,6 +221,7 @@ function buildArtDirectorPrompt(ctx: {
   styleName: string;
   stylePhilosophy: string;
   isWildCard: boolean;
+  compositionSeed: string;
   userInstructions?: string;
 }): string {
   const wildCardAddendum = ctx.isWildCard
@@ -219,6 +229,15 @@ function buildArtDirectorPrompt(ctx: {
 
 ## Creative Signature mode (wild card)
 For THIS style specifically, push past obvious. Pick a composition that would make a D2C founder want to ship this immediately to Instagram Reels. Unexpected but authentic to what the product IS and what it DOES — not thematically random. The strangest-composition-that-still-makes-sense wins.`
+    : '';
+
+  const compositionSection = ctx.compositionSeed
+    ? `
+
+## Starting composition (seed — riff on this, don't repeat verbatim)
+${ctx.compositionSeed}
+
+Use this seed as inspiration. Adapt it to THIS product. Keep the spirit (surface, lighting direction, mood) but make it work for the specific product category.`
     : '';
 
   return `You are an art director for a D2C product advertisement. Write a short creative brief for the SCENE ONLY — the product itself will be preserved exactly from a reference photo (you don't control the product's appearance).
@@ -231,7 +250,7 @@ Typical real-world setting: ${ctx.typicalSetting}
 Physical size: ${ctx.physicalSize}
 
 ## Style
-"${ctx.styleName}" — ${ctx.stylePhilosophy}${wildCardAddendum}${ctx.userInstructions ? `
+"${ctx.styleName}" — ${ctx.stylePhilosophy}${wildCardAddendum}${compositionSection}${ctx.userInstructions ? `
 
 ## Customer note (honor this above style defaults)
 "${ctx.userInstructions}"` : ''}
