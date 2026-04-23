@@ -21,13 +21,13 @@
 import { processProductImageV5, type ProcessImageV5Params } from './gemini-pipeline-v5.js';
 import { openaiGenerateImage } from './openai-generate.js';
 import { combinedQualityCheck } from '../qa/combined-qa.js';
-import type { ProcessImageParams, ProcessImageResult } from './orchestrator.js';
+import type { ProcessImageParams, ProcessImageResult } from './_common/types.js';
 import { downloadBuffer, uploadToStorage, postProcessFinal, addAILabel } from './fallback.js';
 import { lightAnalyze, type LightAnalysis } from './light-analyzer.js';
 import { preprocessImage } from './preprocess.js';
 import { checkContentSafety } from './content-safety.js';
 import { emitPipelineMetrics, type PipelineTier } from './metrics.js';
-import type { ProductProfileV4 } from './product-analyzer-v4.js';
+// ProductProfileV4 removed — product-analyzer-v4.ts deleted in PR 1.
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -56,8 +56,22 @@ const QA_FIDELITY_MIN = 25;
 export interface NeverFailParams extends ProcessImageParams {
   /** Pre-downloaded reference image buffers for multi-angle orders. */
   referenceImageBuffers?: Buffer[];
-  /** Pre-computed product profile from analyzeProductV4() — kept for backward compat, not used by V5. */
-  profileV4?: ProductProfileV4;
+  /** Pre-computed product profile — kept for backward compat shape, not used by V5. */
+  profileV4?: unknown;
+  /**
+   * Override the Tier 1 Gemini image model — used only by the admin cost-testing UI
+   * to compare Nano Banana Pro / 2 / Original. When set, Tier 1 uses this model
+   * instead of TIER1_MODEL. Tier 2 always keeps TIER2_MODEL.
+   */
+  modelOverride?: string;
+  /**
+   * Pipeline cost/quality mode.
+   * - 'full' (default): production-grade — 4 candidates, retry, content-safety preflight.
+   * - 'lean': ~₹15/order — 1 candidate, no retry, no safety preflight; Tier 2/3 fallbacks remain.
+   * - 'skinny': pure baseline test — 1 candidate, no Art Director, no QA gate. Control only.
+   * Tier 2 + Tier 3 fallbacks still fire in all modes so never-fail still holds.
+   */
+  pipelineMode?: 'full' | 'lean' | 'skinny';
 }
 
 export interface NeverFailResult {
@@ -247,6 +261,7 @@ export async function processImageNeverFail(
 ): Promise<NeverFailResult> {
   const totalStart = Date.now();
   const style = params.style ?? 'unknown';
+  const pipelineMode: 'full' | 'lean' | 'skinny' = params.pipelineMode ?? 'full';
 
   // Captured during safety pre-flight so metrics emission can reference them
   // at any exit point (success / refund).
@@ -266,7 +281,12 @@ export async function processImageNeverFail(
   // alcohol etc.) — avoid burning ~$0.50 + 3 min of compute looping through
   // tiers that will all refuse. Runs off the lightAnalyze of the raw buffer,
   // so the safety check doesn't need its own preprocess pass.
-  try {
+  //
+  // Lean mode skips this entirely — saves one LLM call. Gemini's built-in filter
+  // still rejects disallowed content at generation time.
+  if (pipelineMode === 'lean' || pipelineMode === 'skinny') {
+    console.info(JSON.stringify({ event: 'never_fail_safety_skipped', pipelineMode }));
+  } else try {
     const { buffer: analysisBuffer } = await preprocessImage(rawBuffer);
     const analysis = await lightAnalyze([analysisBuffer, ...(params.referenceImageBuffers ?? [])]);
     analysisProductName = analysis.productName;
@@ -309,30 +329,35 @@ export async function processImageNeverFail(
   }
 
   // -- Tier 1: gemini-3-pro-image-preview (primary / best quality) ----------
+  //    Admin cost-testing UI can override via params.modelOverride to point at
+  //    Nano Banana 2 or the original Nano Banana instead.
+  const tier1Model = params.modelOverride ?? TIER1_MODEL;
   {
     console.info(JSON.stringify({
       event: 'never_fail_tier1_start',
       pipeline: 'v5',
-      model: TIER1_MODEL,
+      model: tier1Model,
+      override: params.modelOverride ? true : false,
     }));
 
     try {
       const v5Params: ProcessImageV5Params = {
         ...params,
         referenceImageBuffers: params.referenceImageBuffers,
-        modelOverride: TIER1_MODEL,
+        modelOverride: tier1Model,
+        pipelineMode,
       };
 
       const result = await withTimeout(
         processProductImageV5(v5Params),
         GEMINI_TIER_TIMEOUT_MS,
-        'Tier 1 (gemini-3-pro-image-preview)',
+        `Tier 1 (${tier1Model})`,
       );
 
       console.info(JSON.stringify({
         event: 'never_fail_tier1_success',
         pipeline: 'v5',
-        model: TIER1_MODEL,
+        model: tier1Model,
         qaScore: result.qaScore,
         durationMs: Date.now() - totalStart,
       }));
@@ -347,7 +372,7 @@ export async function processImageNeverFail(
         safetyBlocked: false,
         productName: analysisProductName,
         productCategory: analysisProductCategory,
-        model: TIER1_MODEL,
+        model: tier1Model,
       });
 
       return geminiResultToNeverFail(result, 1, totalStart);
@@ -355,7 +380,7 @@ export async function processImageNeverFail(
       const reason = err instanceof Error ? err.message : String(err);
       console.warn(JSON.stringify({
         event: 'never_fail_tier1_failed',
-        model: TIER1_MODEL,
+        model: tier1Model,
         reason: reason.slice(0, 300),
         durationMs: Date.now() - totalStart,
       }));
@@ -375,6 +400,7 @@ export async function processImageNeverFail(
         ...params,
         referenceImageBuffers: params.referenceImageBuffers,
         modelOverride: TIER2_MODEL,
+        pipelineMode,
       };
 
       const result = await withTimeout(
